@@ -2,6 +2,10 @@ This repository will host code and models for PLATO-2 (https://arxiv.org/abs/200
 
 To be updated soon. Please stay tuned.
 
+# PLATO-2
+**PLATO-2: Towards Building an Open-Domain Chatbot via Curriculum Learning**
+[paper link](https://arxiv.org/abs/2006.16779)
+
 ## Citation
 If you find PLATO-2 useful in your work, please cite the following Arxiv paper:
 ```

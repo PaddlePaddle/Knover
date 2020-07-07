@@ -2,9 +2,10 @@ This repository will host code and models for PLATO-2 (https://arxiv.org/abs/200
 
 To be updated soon. Please stay tuned.
 
-# PLATO-2
-**PLATO-2: Towards Building an Open-Domain Chatbot via Curriculum Learning**
-[paper link](https://arxiv.org/abs/2006.16779)
+# PLATO-2: Towards Building an Open-Domain Chatbot via Curriculum Learning
+
+## Abstract
+To build a high-quality open-domain chatbot, we introduce the effective training process of PLATO-2 via curriculum learning. There are two stages involved in the learning process. In the first stage, a coarse-grained generation model is trained to learn response generation under the simplified framework of one-to-one mapping. In the second stage, a fine-grained generation model and an evaluation model are further trained to learn diverse response generation and response coherence estimation, respectively. PLATO-2 was trained on both Chinese and English data, whose effectiveness and superiority are verified through comprehensive evaluations, achieving new state-of-the-art results.
 
 ## Citation
 If you find PLATO-2 useful in your work, please cite the following Arxiv paper:

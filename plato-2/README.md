@@ -27,8 +27,8 @@ A novel pre-training model for dialogue generation is introduced in this work, i
 * PLATO-2, 32L (1.6B params), EN: [Model](https://baidu-nlp.bj.bcebos.com/PLATO-2/32L.tar)
 
 ```bash
-MODEL_SIZE=24L
-mv /path/to/${MODEL_SIZE}.tar .
+MODEL_SIZE=24L # 24L / 32L
+mv /path/to/${MODEL_SIZE}.tar /path/to/Knover
 tar xf ${MODEL_SIZE}.tar
 ```
 

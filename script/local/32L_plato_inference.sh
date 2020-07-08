@@ -1,7 +1,7 @@
 #!/bin/bash
 set eux
 
-export CUDA_VISIBLE_DEVICES=5
+export CUDA_VISIBLE_DEVICES=0
 
 INFER_FILE=./data/dailydialog_test_60.tsv
 

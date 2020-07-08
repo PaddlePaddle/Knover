@@ -95,4 +95,4 @@ class PlatoReader(DialogReader):
                 batch["latent_id"] = np.array([i for _ in range(batch_size)], dtype="int64").reshape([-1, 1])
                 yield batch
         else:
-            return batch
+            yield batch

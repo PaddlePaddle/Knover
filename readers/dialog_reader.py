@@ -401,10 +401,7 @@ class DialogReader(object):
                     self.current_example = 0
                     self.current_epoch = epoch_index + 1
                 for batch in batch_reader():
-                    if self.mem_efficient:
-                        yield from self._pad_batch_records(batch, is_infer, place)
-                    else:
-                        yield self._pad_batch_records(batch, is_infer, place)
+                    yield from self._pad_batch_records(batch, is_infer, place)
 
         return __wrapper__
 
@@ -475,10 +472,7 @@ class DialogReader(object):
 
         batch_data_id = [record.data_id for record in batch_records]
         batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
-        if self.mem_efficient:
-            yield batch
-        else:
-            return batch
+        yield batch
 
 
 @contextmanager

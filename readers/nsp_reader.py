@@ -162,4 +162,4 @@ class NSPReader(DialogReader):
 
         batch_data_id = [record.data_id for record in batch_records]
         batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
-        return batch
+        yield batch

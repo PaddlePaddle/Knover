@@ -14,7 +14,7 @@ To build a high-quality open-domain chatbot, we introduce the effective training
 
 ## Requirements
 ```
-- python >= 3.7.3
+- python >= 3.7.0
 - paddlepaddle-gpu >= 1.8.1
 - numpy
 - sentencepiece
@@ -37,8 +37,8 @@ tar xf ${MODEL_SIZE}.tar
 ## Inference
 
 ### Data format
-You can check the data format of inference in "./data/dailydialog_test_60.tsv"
-```bash
+You can check the data format of inference in `./data/dailydialog_test_60.tsv`
+```
 src \t tgt
 u_1 [SEP] u_2 [SEP] ... u_n \t r
 ```
@@ -53,7 +53,6 @@ sh ./script/24L_plato_inference.sh
 
 **PLATO-2, 32L**
 ```bash
-cd ..
 sh ./script/32L_plato_inference.sh
 ```
 

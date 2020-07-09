@@ -6,7 +6,8 @@ export CUDA_VISIBLE_DEVICES=0
 INFER_FILE=./data/dailydialog_test_60.tsv
 SAVE_PATH=./plato-2/output
 
-KNOVER_DIR=$(dirname "$0")/../..
+SCRIPT=`realpath "$0"`
+KNOVER_DIR=`dirname ${SCRIPT}`/../..
 cd $KNOVER_DIR
 
 MODEL_SIZE=32L
@@ -14,7 +15,7 @@ MODEL_SIZE=32L
 mkdir -p ${SAVE_PATH}
 
 if [ ! -e "${MODEL_SIZE}/NSP/__model__" ]; then
-    sh scripts/local/save_nsp_model.sh $MODEL_SIZE
+    sh scripts/local/save_nsp_model.sh ${MODEL_SIZE}
 fi
 
 python -u \

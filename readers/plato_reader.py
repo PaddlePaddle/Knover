@@ -16,7 +16,7 @@
 import numpy as np
 
 from readers.dialog_reader import DialogReader
-from utils import pad_batch_data, to_lodtensor
+from utils import pad_batch_data
 
 
 class PlatoReader(DialogReader):
@@ -27,7 +27,7 @@ class PlatoReader(DialogReader):
         self.latent_type_size = args.latent_type_size
         self.use_bow = args.use_bow
 
-    def _pad_batch_records(self, batch_records, is_infer, place):
+    def _pad_batch_records(self, batch_records, is_infer):
         """
         Padding batch records and construct model's inputs.
         """
@@ -61,16 +61,16 @@ class PlatoReader(DialogReader):
                 shift_len=1)
 
         if is_infer:
-            tgt_ids = np.array([[[self.bos_id]]] * len(batch_token_ids), dtype="int64")
+            tgt_ids = np.array([[[self.bos_id]]] * batch_size, dtype="int64")
             if self.continuous_position:
                 tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
             else:
                 tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
             tgt_pos = tgt_pos.reshape(-1, 1, 1)
-            batch["init_score"] = to_lodtensor(np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1), place)
-            batch["tgt_ids"] = to_lodtensor(tgt_ids, place)
-            batch["tgt_pos"] = to_lodtensor(tgt_pos, place)
-            batch["parent_idx"] = np.array(range(len(batch_token_ids)), dtype="int32")
+            batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
+            batch["tgt_ids"] = tgt_ids.tolist()
+            batch["tgt_pos"] = tgt_pos.tolist()
+            batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
 
             batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
         else:
@@ -80,8 +80,7 @@ class PlatoReader(DialogReader):
                 sent_b_starts=batch_tgt_start_idx,
                 is_unidirectional=True,
                 use_latent=True,
-                use_bow=self.use_bow,
-                place=place)
+                use_bow=self.use_bow)
             batch["tgt_label"] = mask_return_list[0]
             batch["tgt_pos"] = mask_return_list[1]
             if self.use_bow:
@@ -90,9 +89,4 @@ class PlatoReader(DialogReader):
 
         batch_data_id = [record.data_id for record in batch_records]
         batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
-        if self.mem_efficient:
-            for i in range(self.latent_type_size):
-                batch["latent_id"] = np.array([i for _ in range(batch_size)], dtype="int64").reshape([-1, 1])
-                yield batch
-        else:
-            yield batch
+        return batch

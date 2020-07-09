@@ -21,7 +21,7 @@ from . import register_model
 from .model_base import Model
 from .transformer_block import encoder, pre_process_layer
 from utils.args import str2bool
-from utils import repeat_array_or_tensor
+from utils import repeat_array_or_tensor, slice_array_or_tensor
 from .generator import Generator
 
 
@@ -35,6 +35,7 @@ class UnifiedTransformer(Model):
         group = Model.add_cmdline_args(parser)
         group.add_argument("--max_seq_len", type=int, default=256)
         group.add_argument("--weight_sharing", type=str2bool, default=True)
+        group.add_argument("--mem_efficient", type=str2bool, default=False)
 
         Generator.add_cmdline_args(parser)
         return group
@@ -74,6 +75,8 @@ class UnifiedTransformer(Model):
         self.prepostprocess_dropout = args.hidden_dropout_prob
         self.attention_dropout = args.attention_probs_dropout_prob
         self.weight_sharing = args.weight_sharing
+
+        self.mem_efficient = args.mem_efficient
 
         self.dtype = "float32"
 
@@ -313,13 +316,6 @@ class UnifiedTransformer(Model):
         feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         return feed_dict
 
-    def _get_feed(self, inputs, is_infer=False):
-        if is_infer and self.generator.num_samples:
-            inputs = {name: repeat_array_or_tensor(array_or_tensor, self.place, self.generator.num_samples)
-                      for name, array_or_tensor in inputs.items()}
-            inputs["parent_idx"] = np.array(range(len(inputs["token_ids"])), dtype="int64")
-        return inputs
-
     def forward(self, inputs, is_infer=False):
         """
         Run model main forward.
@@ -486,35 +482,61 @@ class UnifiedTransformer(Model):
         else:
             raise NotImplementedError
 
+    def _run_generation(self, inputs):
+        """
+        Run generation.
+        """
+        batch_size = len(inputs["data_id"])
+        inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
+        outputs = self._execute(
+            self.infer_program,
+            self._get_feed(inputs, is_infer=True),
+            self.infer_fetch_dict,
+            return_numpy=False)
+
+        predictions = []
+        data_id_list = np.array(outputs["data_id"]).reshape(-1).tolist()
+        token_ids_list = np.array(outputs["token_ids"]).squeeze(2).tolist()
+        seq_ids = outputs["finished_ids"]
+        seq_ids_np  = np.array(outputs["finished_ids"])
+        seq_scores_np = np.array(outputs["finished_scores"])
+        for i, (data_id, token_ids) in enumerate(zip(data_id_list, token_ids_list)):
+            start = seq_ids.lod()[0][i]
+            end = seq_ids.lod()[0][i + 1]
+            for j in range(start, end):
+                sub_start = seq_ids.lod()[1][j]
+                sub_end = seq_ids.lod()[1][j + 1]
+                info = {}
+                info["data_id"] = data_id
+                info["decode_score"] = float(seq_scores_np[sub_end - 1])
+                info["context_token_ids"] = token_ids
+                info["response_token_ids"] = seq_ids_np[sub_start:sub_end].tolist()
+                predictions.append(info)
+        return predictions
+
     def infer_step(self, inputs):
         """
         Run one inference step.
         """
         if self.do_generation:
-            outputs = self._execute(
-                self.infer_program,
-                self._get_feed(inputs, is_infer=True),
-                self.infer_fetch_dict,
-                return_numpy=False)
-            data_id_list = np.array(outputs["data_id"]).reshape(-1).tolist()
-            token_ids_list = np.array(outputs["token_ids"]).squeeze(2).tolist()
-            seq_ids = outputs["finished_ids"]
-            seq_ids_np  = np.array(outputs["finished_ids"])
-            seq_scores_np = np.array(outputs["finished_scores"])
-            predictions = []
-            for i, (data_id, token_ids) in enumerate(zip(data_id_list, token_ids_list)):
-                start = seq_ids.lod()[0][i]
-                end = seq_ids.lod()[0][i + 1]
-                for j in range(start, end):
-                    sub_start = seq_ids.lod()[1][j]
-                    sub_end = seq_ids.lod()[1][j + 1]
-                    info = {}
-                    info["data_id"] = data_id
-                    info["decode_score"] = float(seq_scores_np[sub_end - 1])
-                    info["context_token_ids"] = token_ids
-                    info["response_token_ids"] = seq_ids_np[sub_start:sub_end].tolist()
-                    predictions.append(info)
-            return predictions
+            if self.generator.num_samples:
+                inputs = {
+                    name: repeat_array_or_tensor(array_or_tensor, self.place, self.generator.num_samples)
+                    for name, array_or_tensor in inputs.items()
+                }
+
+            if self.mem_efficient:
+                predictions = []
+                for idx in range(0, len(inputs["data_id"]), self.batch_size):
+                    part_inputs = {
+                        name: slice_array_or_tensor(array_or_tensor, self.place, idx, idx + self.batch_size)
+                        for name, array_or_tensor in inputs.items()
+                    }
+                    part_output = self._run_generation(part_inputs)
+                    predictions.extend(part_output)
+                return predictions
+            else:
+                return self._run_generation(inputs)
         else:
             return self._execute(
                 self.infer_program,

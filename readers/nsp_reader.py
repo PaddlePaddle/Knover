@@ -103,7 +103,7 @@ class NSPReader(DialogReader):
             is_infer=is_infer,
             sort_pool_size=sort_pool_size)
 
-    def _pad_batch_records(self, batch_records, is_infer, place, latent_id=None, start_idx=None):
+    def _pad_batch_records(self, batch_records, is_infer):
         """
         Padding batch records and construct model's inputs.
         """
@@ -128,8 +128,7 @@ class NSPReader(DialogReader):
                 bos_id=self.bos_id,
                 sent_b_starts=batch_tgt_start_idx,
                 labels=batch_label,
-                is_unidirectional=True,
-                place=place)
+                is_unidirectional=True)
             attention_mask = self._gen_self_attn_mask(batch_token_ids, batch_tgt_start_idx)
         else:
             batch_mask_token_ids, tgt_label, tgt_pos, label_pos = mask(
@@ -140,8 +139,7 @@ class NSPReader(DialogReader):
                 mask_id=self.mask_id,
                 sent_b_starts=batch_tgt_start_idx,
                 labels=batch_label,
-                is_unidirectional=False,
-                place=place)
+                is_unidirectional=False)
             if not is_infer:
                 batch_token_ids = batch_mask_token_ids
             batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
@@ -162,4 +160,4 @@ class NSPReader(DialogReader):
 
         batch_data_id = [record.data_id for record in batch_records]
         batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
-        yield batch
+        return batch

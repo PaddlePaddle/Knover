@@ -21,8 +21,8 @@ from . import register_model
 from .model_base import Model
 from .unified_transformer import UnifiedTransformer
 from .transformer_block import encoder, pre_process_layer
-from utils.args import str2bool
 from utils import repeat_array_or_tensor
+from utils.args import str2bool
 from .generator import Generator
 
 
@@ -46,7 +46,6 @@ class Plato(UnifiedTransformer):
         self.latent_emb_name = "latent_embedding"
         self.use_bow = args.use_bow
         self.use_entropy = args.use_entropy
-        self.mem_efficient = args.get("mem_efficient", False)
 
         super(Plato, self).__init__(args, place)
 
@@ -103,18 +102,6 @@ class Plato(UnifiedTransformer):
 
         feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         return feed_dict
-
-    def _get_feed(self, inputs, is_infer=False):
-        if is_infer and not self.mem_efficient:
-            old_bsz = len(inputs["token_ids"])
-            new_bsz = old_bsz * self.latent_type_size
-            inputs = {name: repeat_array_or_tensor(array_or_tensor, self.place, self.latent_type_size)
-                      for name, array_or_tensor in inputs.items()}
-            inputs["latent_id"] = np.array(
-                [i for i in range(self.latent_type_size) for _ in range(old_bsz)],
-                dtype="int64").reshape([-1, 1])
-            inputs["parent_idx"] = np.array(range(new_bsz), dtype="int64")
-        return super(Plato, self)._get_feed(inputs, is_infer)
 
     def _recognition_network(self,
                              token_ids,
@@ -231,3 +218,27 @@ class Plato(UnifiedTransformer):
         if self.use_entropy:
             metrics["loss"] = metrics["loss"] + mean_entropy_loss
         return metrics
+
+    def infer_step(self, inputs):
+        """
+        Run one inference step.
+        """
+        if self.do_generation:
+            batch_size = len(inputs["data_id"])
+            new_bsz = batch_size * self.latent_type_size
+            inputs = {
+                name: repeat_array_or_tensor(array_or_tensor, self.place, self.latent_type_size)
+                for name, array_or_tensor in inputs.items()
+            }
+            # Add latent_id
+            inputs["latent_id"] = np.array(
+                [i for i in range(self.latent_type_size) for _ in range(batch_size)],
+                dtype="int64"
+            ).reshape([-1, 1])
+
+            return super(Plato, self).infer_step(inputs)
+        else:
+            return self._execute(
+                self.infer_program,
+                self._get_feed(inputs, is_infer=True),
+                self.infer_fetch_dict)

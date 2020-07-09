@@ -27,8 +27,7 @@ def mask(batch_tokens,
          labels=None,
          is_unidirectional=False,
          use_latent=False,
-         use_bow=False,
-         place=None):
+         use_bow=False):
     """
     Add mask for batch_tokens, return out, mask_label, mask_pos;
     Note: mask_pos responding the batch_tokens after padded;

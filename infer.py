@@ -40,7 +40,6 @@ def setup_args():
     parser.add_argument("--output_name", type=str, required=True)
 
     parser.add_argument("--skip_steps", type=int, default=1)
-    parser.add_argument("--mem_efficient", type=str2bool, default=False)
 
     models.add_cmdline_args(parser)
     tasks.add_cmdline_args(parser)
@@ -71,8 +70,7 @@ def infer(args):
     infer_generator = task.reader.data_generator(
         input_file=args.infer_file,
         phase=phase,
-        is_infer=True,
-        place=place
+        is_infer=True
     )
 
     # run inference

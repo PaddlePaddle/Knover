@@ -1,5 +1,7 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=0
+set -eux
+
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 
 MODEL_SIZE=$1
 

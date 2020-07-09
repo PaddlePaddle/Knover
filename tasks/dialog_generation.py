@@ -102,16 +102,21 @@ def get_nsp_score_batch(nsp_predictor, predictions):
 
     from readers.nsp_reader import NSPReader
     from utils.args import parse_args
-    import models
-    import tasks
+    from tasks.next_sentence_prediction import NextSentencePrediction
 
     parser = argparse.ArgumentParser()
-    models.add_cmdline_args(parser)
-    tasks.add_cmdline_args(parser)
+    NextSentencePrediction.add_cmdline_args(parser)
+    parser.add_argument("--num_samples", type=int, default=None)
+    parser.add_argument("--config_path", type=str, required=True)
+    parser.add_argument("--mem_efficient", type=str2bool, default=False)
 
     args = parse_args(parser, allow_unknown=True)
-    args.load(args.config_path, "Model")
-    args.batch_size = len(predictions)
+    args.load(args.config_path)
+    if not args.mem_efficient:
+        if args.num_samples:
+            args.batch_size *= args.num_samples
+        if args.latent_type_size:
+            args.batch_size *= args.latent_type_size
     args.tokenized_input = True
     reader = NSPReader(args)
 

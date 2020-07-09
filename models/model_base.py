@@ -19,7 +19,7 @@ import paddle.fluid as fluid
 import paddle.fluid.layers as layers
 
 from models.optimizer import AdamW
-from utils import init_pretraining_params, init_checkpoint
+from utils import init_pretraining_params, init_checkpoint, to_lodtensor
 
 
 class Model(ABC):
@@ -49,15 +49,18 @@ class Model(ABC):
     def __init__(self, args, place):
         self.place = place
         self.exe = fluid.Executor(place)
-        self.is_distributed = args.is_distributed
+
+        self.init_checkpoint = args.init_checkpoint
+        self.init_pretraining_params = args.init_pretraining_params
+
         self.learning_rate = args.learning_rate
         self.warmup_steps = args.warmup_steps
         self.weight_decay = args.weight_decay
         self.max_grad_norm = args.max_grad_norm
-        self.init_checkpoint = args.init_checkpoint
-        self.init_pretraining_params = args.init_pretraining_params
 
+        self.is_distributed = args.is_distributed
         self.run_infer = args.get("run_infer", False)
+        self.batch_size = args.get("batch_size", 1)
         self._build_programs()
         return
 
@@ -141,6 +144,10 @@ class Model(ABC):
         """
         Convert `inputs` into model's feed data format.
         """
+        inputs = {
+            k: to_lodtensor(v, self.place) if isinstance(v, list) else v
+            for k, v in inputs.items()
+        }
         return inputs
 
     def get_data_loader(self, is_infer=False):
@@ -150,13 +157,13 @@ class Model(ABC):
         # TODO: support dygraph.
         if is_infer:
             return fluid.io.DataLoader.from_generator(
-                feed_list=self.infer_feed_list,
+                feed_list=list(self.infer_feed_dict.values()),
                 capacity=64,
                 use_double_buffer=True,
                 iterable=True)
         else:
             return fluid.io.DataLoader.from_generator(
-                feed_list=self.feed_list,
+                feed_list=list(self.feed_dict.values()),
                 capacity=64,
                 use_double_buffer=True,
                 iterable=True)

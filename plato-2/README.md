@@ -2,7 +2,7 @@ This repository will host code and models for PLATO-2 (https://arxiv.org/abs/200
 
 All the release will be ready on or before July 12, 2020.
 
-The English models of PLATO-2 and the inference script for static evaluation have been released. We will release the interactive script and training code for generative models soon.
+We have released the English models of PLATO-2, inference code and interactive script. We will release the training code for generative models soon.
 
 # PLATO-2: 
 **PLATO-2: Towards Building an Open-Domain Chatbot via Curriculum Learning**
@@ -14,10 +14,11 @@ To build a high-quality open-domain chatbot, we introduce the effective training
 
 ## Requirements
 ```
-- python >= 3.7.3
+- python >= 3.7.0
 - paddlepaddle-gpu >= 1.8.1
 - numpy
 - sentencepiece
+- termcolor
 ```
 
 ## Pre-trained dialogue generation model
@@ -28,15 +29,16 @@ A novel pre-training model for dialogue generation is introduced in this work, i
 
 ```bash
 MODEL_SIZE=24L # 24L / 32L
-mv /path/to/${MODEL_SIZE}.tar /path/to/Knover
+cd /path/to/Knover
+mv /path/to/${MODEL_SIZE}.tar .
 tar xf ${MODEL_SIZE}.tar
 ```
 
 ## Inference
 
 ### Data format
-You can check the data format of inference in "./data/dailydialog_test_60.tsv"
-```bash
+You can check the data format of inference in `./data/dailydialog_test_60.tsv`
+```
 src \t tgt
 u_1 [SEP] u_2 [SEP] ... u_n \t r
 ```
@@ -46,17 +48,28 @@ Commands for running inference. The 32L PLATO-2 model requires a 32GB V100 while
 
 **PLATO-2, 24L**
 ```bash
-sh ./script/local/save_nsp_model.sh 24L
-sh ./script/local/24L_plato_inference.sh
+sh ./script/24L_plato_inference.sh
 ```
 
 **PLATO-2, 32L**
 ```bash
-sh ./script/local/save_nsp_model.sh 32L
-sh ./script/local/32L_plato_inference.sh
+sh ./script/32L_plato_inference.sh
 ```
 
 After inference, you can find the output folder `./output` (by default). It contains the inference result `inference_output.txt`.
+
+## Interaction
+Commands for interaction with PLATO-2 models.
+
+**PLATO-2, 24L**
+```bash
+sh ./scripts/24L_plato_interactive.sh
+```
+
+**PLATO-2, 32L**
+```bash
+sh ./scripts/32L_plato_interactive.sh
+```
 
 ## Citation
 If you find PLATO-2 useful in your work, please cite the following Arxiv paper:

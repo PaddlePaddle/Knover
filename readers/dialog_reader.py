@@ -23,7 +23,7 @@ import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.incubate.fleet.collective import fleet
 
-from utils import pad_batch_data, to_lodtensor
+from utils import pad_batch_data
 from utils.args import str2bool
 from utils.masking import mask
 import utils.tokenization as tokenization
@@ -71,9 +71,6 @@ class DialogReader(object):
         self.batch_size = args.batch_size
         self.continuous_position = args.continuous_position
         self.sort_pool_size = args.sort_pool_size
-
-        # magic
-        self.mem_efficient = args.get("mem_efficient", False)
 
         # random_seed must be set for data slicing when using multi-gpu
         self.global_rng = np.random.RandomState(args.random_seed)
@@ -366,8 +363,7 @@ class DialogReader(object):
                        num_part=1,
                        part_id=0,
                        phase=None,
-                       is_infer=False,
-                       place=None):
+                       is_infer=False):
         """Data generator."""
         def __wrapper__():
             if is_infer or phase.endswith("test"):
@@ -401,7 +397,7 @@ class DialogReader(object):
                     self.current_example = 0
                     self.current_epoch = epoch_index + 1
                 for batch in batch_reader():
-                    yield from self._pad_batch_records(batch, is_infer, place)
+                    yield self._pad_batch_records(batch, is_infer)
 
         return __wrapper__
 
@@ -421,7 +417,7 @@ class DialogReader(object):
                 input_mask_data[index, :len(token_ids) + shift_len, :len(token_ids) + shift_len] = 1.0
         return input_mask_data.astype("float32")
 
-    def _pad_batch_records(self, batch_records, is_infer, place):
+    def _pad_batch_records(self, batch_records, is_infer):
         """
         Padding batch records and construct model's inputs.
         """
@@ -454,10 +450,9 @@ class DialogReader(object):
             else:
                 tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
             tgt_pos = tgt_pos.reshape(-1, 1, 1)
-            batch["init_score"] = to_lodtensor(np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1), place)
-            batch["tgt_ids"] = to_lodtensor(tgt_ids, place)
-            batch["tgt_pos"] = to_lodtensor(tgt_pos, place)
-            batch["parent_idx"] = np.array(range(len(batch_token_ids)), dtype="int32")
+            batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
+            batch["tgt_ids"] = tgt_ids.tolist()
+            batch["tgt_pos"] = tgt_pos.tolist()
 
             batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
         else:
@@ -465,14 +460,13 @@ class DialogReader(object):
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
                 sent_b_starts=batch_tgt_start_idx,
-                is_unidirectional=True,
-                place=place)
+                is_unidirectional=True)
             batch["tgt_label"] = mask_return_list[0]
             batch["tgt_pos"] = mask_return_list[1]
 
         batch_data_id = [record.data_id for record in batch_records]
         batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
-        yield batch
+        return batch
 
 
 @contextmanager

@@ -13,8 +13,11 @@ export FLAGS_fuse_parameter_memory_size=64
 
 source ${job_conf}
 
+mkdir -p ${save_path:-"./output"}
+
 python -m \
     paddle.distributed.launch \
+    --log_dir ${log_dir:-"./log"} \
     ./train.py \
     --is_distributed true \
     --model Plato \
@@ -33,4 +36,5 @@ python -m \
     --skip_steps ${skip_steps} \
     --save_steps ${save_steps} \
     --validation_steps ${validation_steps} \
+    --save_path ${save_path:-"./output"} \
     --config_path ${config_path}

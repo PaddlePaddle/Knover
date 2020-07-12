@@ -72,14 +72,18 @@ sh ./scripts/32L_plato_interactive.sh
 ```
 
 ## Training
-Commands for training model.
+Commands for training model. You can find the saved log in `/path/to/Knover/log` and the saved model in `/path/to/Knover/output`.
 
 **PLATO-2, 24L**
+
 ```bash
 sh ./script/24L_plato_training.sh
 ```
 
 **PLATO-2, 32L**
+
+Need 32G V100.
+
 ```bash
 sh ./script/32L_plato_training.sh
 ```

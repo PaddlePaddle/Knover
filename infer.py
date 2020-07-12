@@ -76,12 +76,10 @@ def infer(args):
     # run inference
     begin = time.time()
     infer_out = {}
-    steps = 0
-    for data in infer_generator():
+    for steps, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
         for info in predictions:
             infer_out[info["data_id"]] = info
-        steps += 1
         if steps % args.skip_steps == 0:
             time_cost = time.time() - begin
             print(f"[infer] steps: {steps}, time: {time_cost:.3f}, "

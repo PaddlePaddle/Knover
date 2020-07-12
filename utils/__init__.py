@@ -15,6 +15,7 @@
 
 from itertools import chain
 import os
+import time
 
 import numpy as np
 import paddle.fluid as fluid
@@ -141,6 +142,28 @@ def init_pretraining_params(exe,
         main_program=main_program,
         predicate=existed_params)
     print(f"Load pretraining parameters from {pretraining_params_path}.")
+
+    return
+
+
+class Timer(object):
+
+    def __init__(self):
+        self.pass_time = 0
+        self.start_time = None
+        return
+
+    def start(self):
+        self.start_time = time.time()
+
+    def pause(self):
+        self.pass_time += time.time() - self.start_time
+
+    def reset(self):
+        self.pass_time = 0
+
+    def get(self):
+        return self.pass_time
 
 
 ERROR_MESSAGE="\nYou can not set use_cuda = True in the model because you are using paddlepaddle-cpu.\n \

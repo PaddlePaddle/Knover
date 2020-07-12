@@ -17,6 +17,7 @@ import numpy as np
 
 from readers.dialog_reader import DialogReader
 from utils import pad_batch_data
+from utils.masking import mask
 
 
 class PlatoReader(DialogReader):

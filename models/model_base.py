@@ -16,10 +16,13 @@
 from abc import abstractmethod, ABC
 
 import paddle.fluid as fluid
+from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
+import paddle.fluid.incubate.fleet.base.role_maker as role_maker
 import paddle.fluid.layers as layers
 
 from models.optimizer import AdamW
 from utils import init_pretraining_params, init_checkpoint, to_lodtensor
+from utils.args import str2bool
 
 
 class Model(ABC):
@@ -44,6 +47,10 @@ class Model(ABC):
                            help="The weight decay for optimizer.")
         group.add_argument("--max_grad_norm", type=float, default=.1,
                            help="The maximum norm of gradient.")
+
+        group.add_argument("--use_recompute", type=str2bool, default=False)
+        group.add_argument("--use_amp", type=str2bool, default=False)
+        group.add_argument("--amp_loss_scaling", type=float, default=12800)
         return group
 
     def __init__(self, args, place):
@@ -59,6 +66,9 @@ class Model(ABC):
         self.max_grad_norm = args.max_grad_norm
 
         self.is_distributed = args.is_distributed
+        self.use_recompute = args.use_recompute
+        self.use_amp = args.use_amp
+        self.amp_loss_scaling = args.amp_loss_scaling
         self.run_infer = args.get("run_infer", False)
         self.batch_size = args.get("batch_size", 1)
         self._build_programs()
@@ -82,12 +92,26 @@ class Model(ABC):
                     self.infer_fetch_dict = predictions
             self.infer_program = self.infer_program.clone(for_test=True)
 
-            self.exe.run(self.startup_program)
-            if self.init_pretraining_params is not None:
-                init_pretraining_params(self.exe, self.init_pretraining_params, self.infer_program)
-            if self.init_checkpoint is not None:
-                init_checkpoint(self.exe, self.init_checkpoint, self.infer_program)
+            self.program = self.infer_program
         else:
+            if self.is_distributed:
+                exec_strategy = fluid.ExecutionStrategy()
+                exec_strategy.use_experimental_executor = True
+                exec_strategy.num_threads = 4
+                exec_strategy.num_iteration_per_drop_scope = 30
+
+                dist_strategy = DistributedStrategy()
+                dist_strategy.exec_strategy = exec_strategy
+                dist_strategy.nccl_comm_num = 2
+                dist_strategy.fuse_all_reduce_ops = True
+                if self.use_recompute:
+                    dist_strategy.forward_recompute = True
+                    dist_strategy.enable_sequential_execution=True
+                if self.use_amp:
+                    dist_strategy.use_amp = True
+                    dist_strategy.amp_loss_scaling = self.amp_loss_scaling
+                self.dist_strategy = dist_strategy
+
             self.startup_program = fluid.Program()
             # build train program
             self.train_program = fluid.Program()
@@ -95,20 +119,28 @@ class Model(ABC):
                 with fluid.unique_name.guard():
                     self.feed_dict = inputs = self._get_feed_dict()
                     outputs = self.forward(inputs)
+                    if self.is_distributed and self.use_recompute:
+                        self.dist_strategy.recompute_checkpoints = outputs["checkpoints"]
                     metrics, statistics = self.get_metrics_and_statistics(inputs, outputs)
 
                     # build eval program
                     self.eval_program = self.train_program.clone(for_test=True)
                     self.eval_fetch_dict = {**metrics, **statistics}
 
-                    self.optimize(metrics)
+                    scheduled_lr = self.optimize(metrics)
+                    metrics["scheduled_lr"] = scheduled_lr
                     self.train_fetch_dict = metrics
 
             self.exe.run(self.startup_program)
-            if self.init_pretraining_params is not None:
-                init_pretraining_params(self.exe, self.init_pretraining_params, self.train_program)
-            if self.init_checkpoint is not None:
-                init_checkpoint(self.exe, self.init_checkpoint, self.train_program)
+            self.program = self.train_program
+            if self.is_distributed:
+                self.train_program = fleet.main_program
+
+        self.exe.run(self.startup_program)
+        if self.init_pretraining_params is not None:
+            init_pretraining_params(self.exe, self.init_pretraining_params, self.program)
+        if self.init_checkpoint is not None:
+            init_checkpoint(self.exe, self.init_checkpoint, self.program)
         return
 
     def load(self, model_dir, is_checkpoint=False):
@@ -128,9 +160,9 @@ class Model(ABC):
         """
         # TODO: support dygraph.
         if is_checkpoint:
-            fluid.io.save_persistables(self.exe, model_dir, self.train_program)
+            fluid.io.save_persistables(self.exe, model_dir, self.program)
         else:
-            fluid.io.save_params(self.exe, model_dir, self.train_program)
+            fluid.io.save_params(self.exe, model_dir, self.program)
         return
 
     @abstractmethod
@@ -196,21 +228,27 @@ class Model(ABC):
         # TODO: support dygraph
         grad_clip = fluid.clip.GradientClipByGlobalNorm(self.max_grad_norm)
         if self.warmup_steps > 0:
-            self.scheduled_lr = layers.learning_rate_scheduler.noam_decay(
+            scheduled_lr = layers.learning_rate_scheduler.noam_decay(
                 1 / (self.warmup_steps * (self.learning_rate ** 2)),
                 self.warmup_steps)
         else:
-            self.scheduled_lr = layers.create_global_var(
+            scheduled_lr = layers.create_global_var(
                 name=fluid.unique_name.generate("learning_rate"),
                 shape=[1],
                 value=self.learning_rate,
                 dtype="float32",
                 persistable=True)
 
-        self.optimizer = AdamW(learning_rate=self.scheduled_lr, weight_decay=self.weight_decay)
+        self.optimizer = AdamW(
+            learning_rate=scheduled_lr,
+            grad_clip=grad_clip,
+            weight_decay=self.weight_decay)
+
+        if self.is_distributed:
+            self.optimizer = fleet.distributed_optimizer(self.optimizer, strategy=self.dist_strategy)
 
         self.optimizer.minimize(metrics["loss"])
-        return
+        return scheduled_lr
 
     def _execute(self, program: fluid.Program, feed, fetch_dict, return_numpy=True):
         """

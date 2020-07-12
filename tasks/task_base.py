@@ -31,11 +31,15 @@ class Task(ABC):
 
     def train_step(self, model: Model, inputs):
         """Run one training step."""
-        return model.train_step(inputs)
+        outputs = model.train_step(inputs)
+        outputs = {k: v.tolist()[0] for k, v in outputs.items()}
+        return outputs
 
     def eval_step(self, model: Model, inputs):
         """Run one evaluation step"""
-        return model.eval_step(inputs)
+        outputs = model.eval_step(inputs)
+        outputs = {k: v.tolist()[0] for k, v in outputs.items()}
+        return outputs
 
     def infer_step(self, model: Model, inputs):
         """Run one inference step."""
@@ -48,3 +52,17 @@ class Task(ABC):
         Post-process inference output.
         """
         return predictions
+
+    @abstractmethod
+    def merge_mertrics_and_statistics(self, outputs, part_outputs):
+        """
+        Merge metrics and statistics.
+        """
+        pass
+
+    @abstractmethod
+    def show_metrics(self, outupts):
+        """
+        Show metrics.
+        """
+        pass

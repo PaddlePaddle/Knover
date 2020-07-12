@@ -359,7 +359,7 @@ class DialogReader(object):
     def data_generator(self,
                        input_file=None,
                        reader=None,
-                       epoch=1,
+                       num_epochs=1,
                        num_part=1,
                        part_id=0,
                        phase=None,
@@ -371,8 +371,7 @@ class DialogReader(object):
 
             if reader is None:
                 if self.file_format == "filelist":
-                    record_reader = self._read_files(input_file, phase, do_test,
-                                              not phase.endswith("test"))
+                    record_reader = self._read_files(input_file, phase, is_infer, not phase.endswith("test"))
                 else:
                     if phase == "train":
                         self.total_file = 1
@@ -392,7 +391,7 @@ class DialogReader(object):
             elif phase.startswith("distributed"):
                 batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id, is_test=True)
 
-            for epoch_index in range(epoch):
+            for epoch_index in range(num_epochs):
                 if phase == "train":
                     self.current_example = 0
                     self.current_epoch = epoch_index + 1

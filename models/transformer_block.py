@@ -374,6 +374,7 @@ def encoder(enc_input,
             cache=caches[i] if caches is not None else None,
             gather_idx=gather_idx,
             store=store)
+        checkpoints.extend(cps)
         enc_input = enc_output
     enc_output = pre_process_layer(
         enc_output, preprocess_cmd, prepostprocess_dropout, name="post_encoder", epsilon=epsilon)

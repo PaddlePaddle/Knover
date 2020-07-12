@@ -179,41 +179,6 @@ class UnifiedTransformer(Model):
             bias_attr="pooled_fc.b_0")
         return pooled_out
 
-    def _recognition_network(self,
-                             token_ids,
-                             type_ids,
-                             pos_ids,
-                             role_ids,
-                             recognition_mask):
-        mask_id = layers.fill_constant_batch_size_like(
-            input=token_ids, shape=[-1, 1, 1], value=self.mask_id, dtype="int64")
-        mask_emb = layers.embedding(
-            input=mask_id,
-            size=[self.vocab_size, self.emb_size],
-            dtype=self.dtype,
-            param_attr=fluid.ParamAttr(
-                name=self.token_emb_name, initializer=self.param_initializer))
-        emb_out, n_head_self_attn_mask = self._gen_input(
-            token_ids, type_ids, pos_ids, role_ids, recognition_mask, aux_emb=mask_emb)
-        recognition_out, checkpoints = self._encode(emb_out, n_head_self_attn_mask)
-
-        recognition_feat = layers.slice(
-            input=recognition_out, axes=[1], starts=[0], ends=[1])
-        recognition_feat = layers.fc(
-            input=recognition_feat,
-            size=self.hidden_size,
-            act="tanh",
-            param_attr=fluid.ParamAttr(
-                name="recognition_fc.w_0", initializer=self.param_initializer),
-            bias_attr="recognition_fc.b_0")
-        logits = layers.fc(
-            input=recognition_feat,
-            size=self.latent_type_size,
-            param_attr=fluid.ParamAttr(
-                name=self.latent_emb_name, initializer=self.param_initializer),
-            bias_attr="recognition_bias")
-        return logits, checkpoints
-
     def _generation_network(self,
                             token_ids,
                             type_ids,
@@ -310,7 +275,7 @@ class UnifiedTransformer(Model):
             feed_dict["tgt_generation_mask"] = layers.data(
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
         else:
-            feed_dict["tgt_label"] = layers.data(name="tgt_ids", shape=[-1, 1], dtype="int64")
+            feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_pos"] = layers.data(name="tgt_pos", shape=[-1, 1], dtype="int64")
 
         feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
@@ -347,6 +312,9 @@ class UnifiedTransformer(Model):
             generation_mask=inputs["generation_mask"],
             gather_idx=inputs.get("parent_idx", None)
         )
+
+        if not is_infer:
+            outputs["checkpoints"] = generation_checkpoints
         return outputs
 
     def _calc_bow_logits(self, enc_out, bow_pos):
@@ -448,14 +416,13 @@ class UnifiedTransformer(Model):
             logits=fc_out, label=tgt_label)
         mean_tgt_lm_loss = layers.mean(tgt_lm_loss)
         loss = mean_tgt_lm_loss
-        metrics["lm_loss"] = mean_tgt_lm_loss
+        metrics["token_lm_loss"] = mean_tgt_lm_loss
 
         metrics["loss"] = loss
         return metrics
 
     def _get_statistics(self, inputs, outputs):
         statistics = {}
-        statistics["data_id"] = inputs["data_id"]
         if "tgt_label" in inputs:
             statistics["tokens_num"] = layers.reduce_sum(
                 layers.fill_constant_batch_size_like(
@@ -532,8 +499,8 @@ class UnifiedTransformer(Model):
                         name: slice_array_or_tensor(array_or_tensor, self.place, idx, idx + self.batch_size)
                         for name, array_or_tensor in inputs.items()
                     }
-                    part_output = self._run_generation(part_inputs)
-                    predictions.extend(part_output)
+                    part_outputs = self._run_generation(part_inputs)
+                    predictions.extend(part_outputs)
                 return predictions
             else:
                 return self._run_generation(inputs)

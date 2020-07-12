@@ -93,7 +93,7 @@ class Plato(UnifiedTransformer):
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len + 1], dtype="float32")
             feed_dict["latent_id"] = layers.data(name="latent_id", shape=[-1, 1], dtype="int64")
         else:
-            feed_dict["tgt_label"] = layers.data(name="tgt_ids", shape=[-1, 1], dtype="int64")
+            feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_pos"] = layers.data(name="tgt_pos", shape=[-1, 1], dtype="int64")
 
             if self.use_bow:
@@ -189,6 +189,7 @@ class Plato(UnifiedTransformer):
             )
             outputs["post_probs"] = layers.softmax(logits)
             weights = self._gumbel_softmax(logits)
+            outputs["checkpoints"] = recognition_checkpoints
 
         latent_emb = layers.matmul(x=weights, y=latent_embeddings, transpose_y=True)
         outputs["enc_out"], generation_checkpoints = self._generation_network(
@@ -200,6 +201,9 @@ class Plato(UnifiedTransformer):
             aux_emb=layers.unsqueeze(latent_emb, axes=[1]),
             gather_idx=inputs.get("parent_idx", None),
         )
+
+        if not is_infer:
+            outputs["checkpoints"].extend(generation_checkpoints)
         return outputs
 
     def _get_metrics(self, inputs, outputs):
@@ -209,7 +213,7 @@ class Plato(UnifiedTransformer):
             bow_loss = layers.softmax_with_cross_entropy(
                 logits=fc_out, label=inputs["bow_label"])
             mean_bow_loss = layers.mean(bow_loss)
-            metrics["bow_loss"] = mean_bow_loss
+            metrics["token_bow_loss"] = mean_bow_loss
             metrics["loss"] = metrics["loss"] + mean_bow_loss
 
         entropy_loss = layers.reduce_sum(outputs["post_probs"] * layers.log(outputs["post_probs"]), dim=1)

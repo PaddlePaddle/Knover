@@ -14,6 +14,7 @@
 """Dialogue generation task."""
 
 from collections import defaultdict
+import math
 
 from readers.dialog_reader import DialogReader
 from readers.plato_reader import PlatoReader
@@ -41,7 +42,7 @@ def post_process_context(token_ids, reader, merge=True):
 
 def post_process_response(token_ids, reader, merge=True):
     """
-    Post-process the beam-search decoded sequence. Truncate from the first
+    Post-process the decoded sequence. Truncate from the first
     <eos> and remove the <bos> and <eos> tokens currently.
     """
     eos_pos = len(token_ids)
@@ -245,3 +246,51 @@ class DialogGeneration(Task):
             return self._post_process_generation_output(predictions)
         else:
             return self._post_process_scoring_output(predictions)
+
+    def merge_mertrics_and_statistics(self, outputs, part_outputs):
+        """
+        Merge two evaulation output.
+        """
+        if outputs is None:
+            return part_outputs
+
+        if part_outputs is None:
+            return outputs
+
+        batch_size = outputs.pop("batch_size")
+        tokens_num = outputs.pop("tokens_num")
+        part_batch_size = part_outputs.pop("batch_size")
+        part_tokens_num = part_outputs.pop("tokens_num")
+
+        new_outputs = {
+            "batch_size": batch_size + part_batch_size,
+            "tokens_num": tokens_num + part_tokens_num
+        }
+        for k in outputs:
+            if k.startswith("tokens_"):
+                new_outputs[k] = (
+                    outputs[k] * tokens_num + part_outputs[k] * part_tokens_num
+                ) / new_outputs["tokens_num"]
+            else:
+                new_outputs[k] = (
+                    outputs[k] * batch_size + part_outputs[k] * part_batch_size
+                ) / new_outputs["batch_size"]
+        return new_outputs
+
+    def show_metrics(self, outputs):
+        """
+        Show evaluation outputs.
+        """
+        if outputs is None:
+            raise ValueError("metrics is None")
+        outputs.pop("batch_size", None)
+        outputs.pop("tokens_num", None)
+        metrics_message = []
+        for k in outputs:
+            if k.startswith("token_"):
+                metrics_message.append(": ".join([k[6:], str(outputs[k])]))
+            else:
+                metrics_message.append(": ".join([k, str(outputs[k])]))
+            if k == "token_lm_loss":
+                metrics_message.append(": ".join(["ppl", str(math.exp(outputs[k]))]))
+        return ", ".join(metrics_message)

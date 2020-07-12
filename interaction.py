@@ -14,21 +14,16 @@
 """Interaction main program."""
 
 import argparse
-from collections import defaultdict, namedtuple
+from collections import namedtuple
 import json
-import os
-import subprocess
-import sys
-import time
 
 from termcolor import colored, cprint
-import numpy as np
 import paddle.fluid as fluid
 
 import models
 from tasks.dialog_generation import DialogGeneration
 from utils import check_cuda
-from utils.args import parse_args, str2bool
+from utils.args import parse_args
 
 
 def setup_args():

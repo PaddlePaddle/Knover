@@ -204,7 +204,7 @@ class DialogReader(object):
             "pos_ids": src_pos_ids
         }
         if self.use_role:
-            fill_values["role_ids"] = role_ids
+            field_values["role_ids"] = role_ids
         field_values["tgt_start_idx"] = tgt_start_idx
         field_values["data_id"] = example.data_id
 

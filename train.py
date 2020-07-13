@@ -119,7 +119,7 @@ def evaluate(task, model, generator, args, dev_count, gpu_id):
         outputs = task.merge_mertrics_and_statistics(outputs, part_outputs)
 
         if step % args.skip_steps == 0:
-            print(f"step: {step}", task.show_metrics(outputs))
+            print(f"\tstep {step}:", task.show_metrics(outputs))
 
     if args.is_distributed:
         # merge evaluation outputs in distributed mode.
@@ -148,7 +148,7 @@ def evaluate(task, model, generator, args, dev_count, gpu_id):
             subprocess.getoutput("rm " + os.path.join(args.save_path, f"evaluation_output.part*"))
 
     if gpu_id == 0:
-        print("[evaluate]", task.show_metrics(outputs))
+        print("[Evaluation]", task.show_metrics(outputs))
     return
 
 

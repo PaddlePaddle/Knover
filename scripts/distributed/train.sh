@@ -25,6 +25,8 @@ python -m \
     --vocab_path ./package/dialog_en/vocab.txt \
     --spm_model_file ./package/dialog_en/spm.model \
     --init_pretraining_params ${init_params} \
+    --data_format ${data_format:-"raw"} \
+    --file_format ${file_format:-"file"} \
     --train_file ${train_file} \
     --valid_file ${valid_file} \
     --in_tokens ${in_tokens} \

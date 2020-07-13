@@ -66,7 +66,9 @@ sh ./scripts/32L_plato_interactive.sh
 ```
 
 ## Training
-Commands for training model. You can find the saved log in `/path/to/Knover/log` and the saved model in `/path/to/Knover/output`.
+Commands for multi-GPU training model. You can find the saved log in `/path/to/Knover/log` and the saved model in `/path/to/Knover/output`. Related configurations can be found in `/path/to/Knover/package/dialog_en/plato/*_train.conf`.
+
+Note: You need to install NCCL library and set up the environment variable `LD_LIBRARY` properly.
 
 **PLATO-2, 24L**
 

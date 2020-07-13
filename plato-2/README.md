@@ -1,9 +1,3 @@
-This repository will host code and models for PLATO-2 (https://arxiv.org/abs/2006.16779).
-
-All the release will be ready on or before July 12, 2020.
-
-We have released the English models of PLATO-2, inference code, interactive script and the training code for generative models.
-
 # PLATO-2: 
 **PLATO-2: Towards Building an Open-Domain Chatbot via Curriculum Learning**
 
@@ -82,7 +76,7 @@ sh ./script/24L_plato_training.sh
 
 **PLATO-2, 32L**
 
-Need 32G V100.
+This training requires a 32G V100.
 
 ```bash
 sh ./script/32L_plato_training.sh

@@ -53,16 +53,36 @@ class Task(ABC):
         """
         return predictions
 
-    @abstractmethod
     def merge_mertrics_and_statistics(self, outputs, part_outputs):
         """
         Merge metrics and statistics.
         """
-        pass
+        if outputs is None:
+            return part_outputs
 
-    @abstractmethod
+        if part_outputs is None:
+            return outputs
+
+        batch_size = outputs.pop("batch_size")
+        part_batch_size = part_outputs.pop("batch_size")
+
+        new_outputs = {
+            "batch_size": batch_size + part_batch_size,
+        }
+        for k in outputs:
+            new_outputs[k] = (
+                outputs[k] * batch_size + part_outputs[k] * part_batch_size
+            ) / new_outputs["batch_size"]
+        return new_outputs
+
     def show_metrics(self, outupts):
         """
         Show metrics.
         """
-        pass
+        if outputs is None:
+            raise ValueError("metrics is None")
+        outputs.pop("batch_size", None)
+        metrics_message = []
+        for k in outputs:
+            metrics_message.append(": ".join([k, str(outputs[k])]))
+        return ", ".join(metrics_message)

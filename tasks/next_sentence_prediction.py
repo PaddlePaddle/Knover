@@ -27,6 +27,7 @@ class NextSentencePrediction(Task):
 
     @classmethod
     def add_cmdline_args(cls, parser):
+        """Add cmdline argurments."""
         group = NSPReader.add_cmdline_args(parser)
         return group
 

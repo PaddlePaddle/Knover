@@ -75,12 +75,13 @@ class Task(ABC):
             ) / new_outputs["batch_size"]
         return new_outputs
 
-    def show_metrics(self, outupts):
+    def show_metrics(self, outputs):
         """
         Show metrics.
         """
         if outputs is None:
             raise ValueError("metrics is None")
+        outputs = dict(outputs)
         outputs.pop("batch_size", None)
         metrics_message = []
         for k in outputs:

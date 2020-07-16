@@ -35,7 +35,7 @@ class Plato(UnifiedTransformer):
         """Add cmdline argurments."""
         group = UnifiedTransformer.add_cmdline_args(parser)
         group.add_argument("--use_role", type=str2bool, default=False)
-        group.add_argument("--use_bow", type=str2bool, default=False)
+        group.add_argument("--use_bow", type=str2bool, default=True)
         group.add_argument("--use_entropy", type=str2bool, default=False)
         return group
 

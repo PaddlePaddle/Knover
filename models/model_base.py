@@ -35,8 +35,8 @@ class Model(ABC):
         """Add cmdline argurments."""
         group = parser.add_argument_group("Model")
         # Init checkpoint
-        group.add_argument("--init_checkpoint", type=str, default=None)
-        group.add_argument("--init_pretraining_params", type=str, default=None)
+        group.add_argument("--init_checkpoint", type=str, default="")
+        group.add_argument("--init_pretraining_params", type=str, default="")
 
         # Optimizer
         group.add_argument("-lr", "--learning_rate", type=float, default=1e-4,
@@ -137,9 +137,9 @@ class Model(ABC):
                 self.train_program = fleet.main_program
 
         self.exe.run(self.startup_program)
-        if self.init_pretraining_params is not None:
+        if self.init_pretraining_params != "":
             init_pretraining_params(self.exe, self.init_pretraining_params, self.program)
-        if self.init_checkpoint is not None:
+        elif self.init_checkpoint != "":
             init_checkpoint(self.exe, self.init_checkpoint, self.program)
         return
 
@@ -149,9 +149,9 @@ class Model(ABC):
         """
         # TODO: support dygraph.
         if is_checkpoint:
-            init_checkpoint(self.exe, model_dir, self.train_program)
+            init_checkpoint(self.exe, model_dir, self.program)
         else:
-            init_pretraining_params(self.exe, model_dir, self.train_program)
+            init_pretraining_params(self.exe, model_dir, self.program)
         return
 
     def save(self, model_dir, is_checkpoint=False):

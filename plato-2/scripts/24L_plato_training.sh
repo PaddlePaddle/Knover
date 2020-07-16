@@ -2,4 +2,4 @@
 set -eux
 
 cd ..
-./scripts/distributed/train.sh ./package/dialog_en/plato/24L_train.conf
+./scripts/local/train.sh ./package/dialog_en/plato/24L_train.conf

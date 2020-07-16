@@ -68,6 +68,7 @@ class Generator(object):
         self.continuous_position = args.continuous_position
         self.temperature = args.temperature
 
+        # reranking
         self.num_samples = args.num_samples
 
         # top-k sampling

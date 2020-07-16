@@ -501,9 +501,9 @@ class UnifiedTransformer(Model):
                     }
                     part_outputs = self._run_generation(part_inputs)
                     predictions.extend(part_outputs)
-                return predictions
             else:
-                return self._run_generation(inputs)
+                predictions = self._run_generation(inputs)
+            return predictions
         else:
             return self._execute(
                 self.infer_program,

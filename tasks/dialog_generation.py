@@ -161,6 +161,7 @@ class DialogGeneration(Task):
 
     @classmethod
     def add_cmdline_args(cls, parser):
+        """Add cmdline argurments."""
         group = parser.add_argument_group("Task")
         group.add_argument("--do_generation", type=str2bool, default=False)
         group.add_argument("--is_cn", type=str2bool, default=False)
@@ -283,6 +284,7 @@ class DialogGeneration(Task):
         """
         if outputs is None:
             raise ValueError("metrics is None")
+        outputs = dict(outputs)
         outputs.pop("batch_size", None)
         outputs.pop("tokens_num", None)
         metrics_message = []

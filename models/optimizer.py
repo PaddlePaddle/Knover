@@ -29,6 +29,7 @@ class AdamW(fluid.optimizer.AdamOptimizer):
         self.pat = re.compile(var_name_to_exclude)
 
     def apply_optimize(self, loss, startup_program, params_grads):
+        """Update params with weight decay."""
         super(AdamW, self).apply_optimize(loss, startup_program, params_grads)
         for p, g in params_grads:
             if not self.pat.match(p.name):

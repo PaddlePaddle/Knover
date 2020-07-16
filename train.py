@@ -42,7 +42,7 @@ def setup_args():
     parser.add_argument("--valid_file", type=str, required=True)
 
     parser.add_argument("--num_epochs", type=int, default=20)
-    parser.add_argument("--skip_steps", type=int, default=100)
+    parser.add_argument("--log_steps", type=int, default=100)
     parser.add_argument("--validation_steps", type=int, default=1000)
     parser.add_argument("--save_steps", type=int, default=5000)
 
@@ -95,10 +95,12 @@ def train(args):
         model_timer.start()
         metrics = task.train_step(model, data)
         model_timer.pause()
-        if step % args.skip_steps == 0:
+        if step % args.log_steps == 0:
             time_cost = model_timer.pass_time
-            print(f"[train] step: {step}, time: {time_cost:.3f}, "
-                  f"speed: {args.skip_steps / time_cost:.3f} steps/s")
+            current_epoch, current_file_index, total_file = task.reader.get_train_progress()
+            print(f"[train][{current_epoch}] progress: {current_file_index}/{total_file} "
+                  f"step: {step}, time: {time_cost:.3f}, "
+                  f"speed: {args.log_steps / time_cost:.3f} steps/s")
             print("\tcurrent lr:", metrics.pop('scheduled_lr'))
             print("\t" + task.show_metrics(metrics))
             model_timer.reset()
@@ -113,12 +115,13 @@ def train(args):
 
 def evaluate(task, model, generator, args, dev_count, gpu_id):
     outputs = None
+    print("=" * 80)
     print("Evaluation:")
     for step, data in enumerate(generator(), 1):
         part_outputs = task.eval_step(model, data)
         outputs = task.merge_mertrics_and_statistics(outputs, part_outputs)
 
-        if step % args.skip_steps == 0:
+        if step % args.log_steps == 0:
             print(f"\tstep {step}:", task.show_metrics(outputs))
 
     if args.is_distributed:
@@ -149,6 +152,7 @@ def evaluate(task, model, generator, args, dev_count, gpu_id):
 
     if gpu_id == 0:
         print("[Evaluation]", task.show_metrics(outputs))
+    print("=" * 80)
     return
 
 

@@ -306,14 +306,14 @@ def encoder_layer(input,
         hidden_act,
         param_initializer=param_initializer,
         name=name + "_ffn")
-    output = post_process_layer(
+    ffd_output = post_process_layer(
         attn_output,
         ffd_output,
         postprocess_cmd,
         prepostprocess_dropout,
         name=name + "_post_ffn",
         epsilon=epsilon)
-    return output, [ffd_output]
+    return ffd_output, [attn_output, ffd_output]
 
 
 def encoder(enc_input,

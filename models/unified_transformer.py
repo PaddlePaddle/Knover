@@ -80,11 +80,6 @@ class UnifiedTransformer(Model):
 
         self.dtype = "float32"
 
-        # role embeddings
-        self.use_role = args.use_role
-        if self.use_role:
-            self.role_type_size = args.role_type_size
-            self.role_emb_name = "role_embedding"
 
         # Initialize all weigths by truncated normal initializer, and all biases
         # will be initialized by constant zero by default.
@@ -101,7 +96,6 @@ class UnifiedTransformer(Model):
                    token_ids,
                    type_ids,
                    pos_ids,
-                   role_ids,
                    input_mask,
                    aux_emb=None):
         token_emb_out = layers.embedding(
@@ -123,15 +117,6 @@ class UnifiedTransformer(Model):
             param_attr=fluid.ParamAttr(
                 name=self.pos_emb_name, initializer=self.param_initializer))
         emb_out = token_emb_out + type_emb_out + pos_emb_out
-
-        if self.use_role:
-            role_emb_out = layers.embedding(
-                input=role_ids,
-                size=[self.role_type_size, self.emb_size],
-                dtype=self.dtype,
-                param_attr=fluid.ParamAttr(
-                    name=self.role_emb_name, initializer=self.param_initializer))
-            emb_out = emb_out + role_emb_out
 
         # auxiliary memory embeddings
         if aux_emb is not None:
@@ -183,16 +168,14 @@ class UnifiedTransformer(Model):
                             token_ids,
                             type_ids,
                             pos_ids,
-                            role_ids,
                             generation_mask,
                             aux_emb=None,
                             gather_idx=None):
         emb_out, n_head_self_attn_mask = self._gen_input(
-            token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
-        generation_out = self._encode(
+            token_ids, type_ids, pos_ids, generation_mask, aux_emb=aux_emb)
+        return self._encode(
             emb_out, n_head_self_attn_mask, self.generation_caches,
             gather_idx=gather_idx)
-        return generation_out
 
     def _encode(self, emb_out, n_head_self_attn_mask, caches=None, gather_idx=None):
         return encoder(
@@ -242,9 +225,6 @@ class UnifiedTransformer(Model):
         feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-
-        if self.use_role:
-            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
 
         feed_dict["generation_mask"] = layers.data(
             name="generation_mask",
@@ -308,7 +288,6 @@ class UnifiedTransformer(Model):
             token_ids=inputs["token_ids"],
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
-            role_ids=inputs.get("role_ids", None),
             generation_mask=inputs["generation_mask"],
             gather_idx=inputs.get("parent_idx", None)
         )
@@ -317,50 +296,7 @@ class UnifiedTransformer(Model):
             outputs["checkpoints"] = generation_checkpoints
         return outputs
 
-    def _calc_bow_logits(self, enc_out, bow_pos):
-        """Get the logits of generation."""
-        bow_feat = layers.slice(
-            input=enc_out, axes=[1], starts=[0], ends=[1])
-        bow_feat = layers.reshape(
-            x=bow_feat, shape=[-1, self.hidden_size])
-        bow_pos = layers.cast(x=bow_pos, dtype="int32")
-        bow_feat = layers.gather(input=bow_feat, index=bow_pos)
-
-        bow_trans_feat = layers.fc(
-            input=bow_feat,
-            size=self.emb_size,
-            act=self.hidden_act,
-            param_attr=fluid.ParamAttr(
-                name="bow_trans_fc.w_0",
-                initializer=self.param_initializer),
-            bias_attr=fluid.ParamAttr(name="bow_trans_fc.b_0"))
-
-        bow_trans_feat = pre_process_layer(
-            bow_trans_feat, self.post_cls_cmd, name="bow_trans")
-
-        if self.weight_sharing:
-            fc_out = layers.matmul(
-                x=bow_trans_feat,
-                y=fluid.default_main_program().global_block().var(
-                    self.token_emb_name),
-                transpose_y=True)
-            if self.cls_bias:
-                fc_out += layers.create_parameter(
-                    shape=[self.vocab_size],
-                    dtype=self.dtype,
-                    attr=fluid.ParamAttr(name="bow_out_fc.b_0"),
-                    is_bias=True)
-        else:
-            bow_out_bias_attr = fluid.ParamAttr(name="bow_out_fc.b_0") if self.cls_bias else False
-            fc_out = layers.fc(input=bow_trans_feat,
-                               size=self.vocab_size,
-                               param_attr=fluid.ParamAttr(
-                                   name="bow_out_fc.w_0",
-                                   initializer=self.param_initializer),
-                               bias_attr=bow_out_bias_attr)
-        return fc_out
-
-    def _calc_logits(self, enc_out, seq_pos=None):
+    def _calc_logits(self, enc_out, checkpoints=None, seq_pos=None):
         """Get the logits of generation."""
         enc_out = layers.reshape(
             x=enc_out, shape=[-1, self.hidden_size])
@@ -381,6 +317,9 @@ class UnifiedTransformer(Model):
 
         seq_trans_feat = pre_process_layer(
             seq_trans_feat, self.post_cls_cmd, name="mask_lm_trans")
+
+        if checkpoints is not None:
+            checkpoints.append(seq_trans_feat)
 
         if self.weight_sharing:
             fc_out = layers.matmul(
@@ -407,13 +346,9 @@ class UnifiedTransformer(Model):
     def _get_metrics(self, inputs, outputs):
         metrics = {}
 
-        tgt_pos = inputs["tgt_pos"]
-        tgt_label = inputs["tgt_label"]
-
-        fc_out = self._calc_logits(outputs["enc_out"], tgt_pos)
-
+        fc_out = self._calc_logits(outputs["enc_out"], outputs["checkpoints"], inputs["tgt_pos"])
         tgt_lm_loss = layers.softmax_with_cross_entropy(
-            logits=fc_out, label=tgt_label)
+            logits=fc_out, label=inputs["tgt_label"])
         mean_tgt_lm_loss = layers.mean(tgt_lm_loss)
         loss = mean_tgt_lm_loss
         metrics["token_lm_loss"] = mean_tgt_lm_loss

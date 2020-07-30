@@ -34,7 +34,7 @@ class Generator(object):
         group.add_argument("--max_dec_len", type=int, default=64)
 
         group.add_argument("--decoding_strategy", type=str, default="topk_sampling",
-                           choices=["beam_search", "topk_sampling"])
+                           choices=["beam_search", "topk_sampling", "topp_sampling"])
         group.add_argument("--temperature", type=float, default=1.)
         group.add_argument("--ignore_unk", type=str2bool, default=True)
 
@@ -44,9 +44,12 @@ class Generator(object):
         # top-k sampling
         group.add_argument("--topk", type=int, default=10)
 
+        # top-p sampling
+        group.add_argument("--topp", type=float, default=0.9)
+
         # beam search
         group.add_argument("--beam_size", type=int, default=10)
-        group.add_argument("--length_average", type=str2bool, default=False)
+        group.add_argument("--length_average", type=str2bool, default=True)
         group.add_argument("--length_penalty", type=float, default=0.0)
 
         return group
@@ -60,7 +63,6 @@ class Generator(object):
         self.vocab_size = args.vocab_size
 
         # model related
-        self.use_role = args.use_role
 
         # basic settings
         self.decoding_strategy = args.decoding_strategy
@@ -73,6 +75,9 @@ class Generator(object):
 
         # top-k sampling
         self.topk = args.topk
+
+        # top-p sampling
+        self.topp = args.topp
 
         # beam search
         self.beam_size = args.beam_size
@@ -162,20 +167,10 @@ class Generator(object):
                         shape=[-1, 1, 1],
                         dtype=pre_ids.dtype), y=step_idx, axis=0)
 
-            if self.use_role:
-                pre_role = layers.fill_constant_batch_size_like(
-                        input=pre_mask,
-                        value=0,
-                        shape=[-1, 1, 1],
-                        dtype=pre_ids.dtype)
-            else:
-                pre_role = None
-
             dec_out, _ = model._generation_network(
                 token_ids=pre_ids,
                 type_ids=pre_sent,
                 pos_ids=pre_pos,
-                role_ids=pre_role,
                 generation_mask=tmp_tgt_generation_mask,
                 gather_idx=parent_idx)
             logits = model._calc_logits(dec_out)
@@ -213,6 +208,27 @@ class Generator(object):
                     old_probs = probs
                     probs = probs * ge_cond / layers.reduce_sum(topk_probs, dim=-1, keep_dim=True)
                     sampling_ids = layers.sampling_id(probs, dtype="int")
+                    probs = old_probs
+                elif self.decoding_strategy.startswith("topp_sampling"):
+                    sorted_probs, sorted_idx = layers.argsort(probs, descending=True)
+                    cum_sorted_probs = layers.cumsum(sorted_probs, axis=1, exclusive=True)
+                    lt_cond = layers.cast(
+                        layers.less_than(
+                            cum_sorted_probs,
+                            layers.fill_constant_batch_size_like(
+                                cum_sorted_probs,
+                                cum_sorted_probs.shape,
+                                cum_sorted_probs.dtype,
+                                self.topp)
+                        ),
+                        "float32"
+                    )
+                    old_probs = probs
+                    candidate_probs = sorted_probs * lt_cond
+                    probs = candidate_probs / layers.reduce_sum(candidate_probs, dim=-1, keep_dim=True)
+                    sampling_ids = layers.sampling_id(probs, dtype="int")
+                    sampling_ids = layers.index_sample(sorted_idx, layers.unsqueeze(sampling_ids, [1]))
+                    sampling_ids = layers.squeeze(sampling_ids, [1])
                     probs = old_probs
                 else:
                     raise ValueError(self.decoding_strategy)

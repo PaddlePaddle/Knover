@@ -11,22 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Save NSP model."""
+"""Save inference model."""
 
 import argparse
-from collections import defaultdict
 import json
-import os
-import subprocess
-import time
 
-import numpy as np
 import paddle.fluid as fluid
 
 import models
 import tasks
 from utils import check_cuda
-from utils.args import parse_args, str2bool
+from utils.args import parse_args
 
 
 def setup_args():
@@ -38,7 +33,7 @@ def setup_args():
     models.add_cmdline_args(parser)
     tasks.add_cmdline_args(parser)
 
-    parser.add_argument("--nsp_inference_model_path", type=str, required=True)
+    parser.add_argument("--inference_model_path", type=str, required=True)
 
     args = parse_args(parser)
     args.load(args.config_path, "Model")
@@ -57,7 +52,7 @@ def save(args):
 
     task = tasks.create_task(args)
     model = models.create_model(args, place)
-    model.save_infer_model(args.nsp_inference_model_path)
+    model.save_inference_model(args.inference_model_path)
     return
 
 

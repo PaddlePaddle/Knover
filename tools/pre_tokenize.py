@@ -37,7 +37,7 @@ def main(args):
         output_fp.write("src\ttgt\n")
         for line in fp:
             src, tgt = line.strip().split("\t")
-            src = " ".join(tokenizer.tokenize(src))
+            src = " [SEP] ".join([" ".join(tokenizer.tokenize(s)) for s in src.split(" [SEP] ")])
             output_fp.write(src + "\t" + " ".join(tokenizer.tokenize(tgt)) + "\n")
 
 

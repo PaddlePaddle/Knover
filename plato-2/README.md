@@ -13,6 +13,10 @@ To build a high-quality open-domain chatbot, we introduce the effective training
 - numpy
 - sentencepiece
 - termcolor
+
+- CUDA == 10.1 (recommand)
+- CUDNN == 7.6 (recommand)
+- NCCL
 ```
 
 ## Pre-trained dialogue generation model

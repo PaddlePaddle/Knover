@@ -104,7 +104,7 @@ def train(args):
             print(f"[train][{current_epoch}] progress: {current_file_index}/{total_file} "
                   f"step: {step}, time: {time_cost:.3f}, "
                   f"speed: {args.log_steps / time_cost:.3f} steps/s")
-            print("\tcurrent lr: {outputs.pop('scheduled_lr'):.7f}")
+            print(f"\tcurrent lr: {outputs.pop('scheduled_lr'):.7f}")
             metrics = task.get_metrics(outputs)
             print("\t" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
             timer.reset()

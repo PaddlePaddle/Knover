@@ -36,8 +36,6 @@ class PlatoReader(DialogReader):
         batch_token_ids = [record.token_ids for record in batch_records]
         batch_type_ids = [record.type_ids for record in batch_records]
         batch_pos_ids = [record.pos_ids for record in batch_records]
-        if self.use_role:
-            batch_role_ids = [record.role_ids for record in batch_records]
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
 
@@ -47,8 +45,6 @@ class PlatoReader(DialogReader):
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
         batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
         batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-        if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
 
         batch["generation_mask"] = self._gen_self_attn_mask(
             batch_token_ids,

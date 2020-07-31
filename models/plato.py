@@ -34,7 +34,6 @@ class Plato(UnifiedTransformer):
     def add_cmdline_args(cls, parser):
         """Add cmdline argurments."""
         group = UnifiedTransformer.add_cmdline_args(parser)
-        group.add_argument("--use_role", type=str2bool, default=False)
         group.add_argument("--use_bow", type=str2bool, default=True)
         group.add_argument("--use_entropy", type=str2bool, default=False)
         return group
@@ -54,9 +53,6 @@ class Plato(UnifiedTransformer):
         feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-
-        if self.use_role:
-            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
 
         if not is_infer:
             feed_dict["recognition_mask"] = layers.data(
@@ -107,7 +103,6 @@ class Plato(UnifiedTransformer):
                              token_ids,
                              type_ids,
                              pos_ids,
-                             role_ids,
                              recognition_mask):
         mask_id = layers.fill_constant_batch_size_like(
             input=token_ids, shape=[-1, 1, 1], value=self.mask_id, dtype="int64")
@@ -118,7 +113,7 @@ class Plato(UnifiedTransformer):
             param_attr=fluid.ParamAttr(
                 name=self.token_emb_name, initializer=self.param_initializer))
         emb_out, n_head_self_attn_mask = self._gen_input(
-            token_ids, type_ids, pos_ids, role_ids, recognition_mask, aux_emb=mask_emb)
+            token_ids, type_ids, pos_ids, recognition_mask, aux_emb=mask_emb)
 
         recognition_out, checkpoints = self._encode(emb_out, n_head_self_attn_mask)
 
@@ -184,7 +179,6 @@ class Plato(UnifiedTransformer):
                 token_ids=inputs["token_ids"],
                 type_ids=inputs["type_ids"],
                 pos_ids=inputs["pos_ids"],
-                role_ids=inputs.get("role_ids", None),
                 recognition_mask=inputs["recognition_mask"],
             )
             outputs["post_probs"] = layers.softmax(logits)
@@ -196,7 +190,6 @@ class Plato(UnifiedTransformer):
             token_ids=inputs["token_ids"],
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
-            role_ids=inputs.get("role_ids", None),
             generation_mask=inputs["generation_mask"],
             aux_emb=layers.unsqueeze(latent_emb, axes=[1]),
             gather_idx=inputs.get("parent_idx", None),
@@ -206,10 +199,56 @@ class Plato(UnifiedTransformer):
             outputs["checkpoints"].extend(generation_checkpoints)
         return outputs
 
+    def _calc_bow_logits(self, enc_out, checkpoints, bow_pos):
+        """Get the logits of generation."""
+        bow_feat = layers.slice(
+            input=enc_out, axes=[1], starts=[0], ends=[1])
+        bow_feat = layers.reshape(
+            x=bow_feat, shape=[-1, self.hidden_size])
+        bow_pos = layers.cast(x=bow_pos, dtype="int32")
+        bow_feat = layers.gather(input=bow_feat, index=bow_pos)
+
+        bow_trans_feat = layers.fc(
+            input=bow_feat,
+            size=self.emb_size,
+            act=self.hidden_act,
+            param_attr=fluid.ParamAttr(
+                name="bow_trans_fc.w_0",
+                initializer=self.param_initializer),
+            bias_attr=fluid.ParamAttr(name="bow_trans_fc.b_0"))
+
+        bow_trans_feat = pre_process_layer(
+            bow_trans_feat, self.post_cls_cmd, name="bow_trans")
+
+        checkpoints.append(bow_trans_feat)
+
+        if self.weight_sharing:
+            fc_out = layers.matmul(
+                x=bow_trans_feat,
+                y=fluid.default_main_program().global_block().var(
+                    self.token_emb_name),
+                transpose_y=True)
+            if self.cls_bias:
+                fc_out += layers.create_parameter(
+                    shape=[self.vocab_size],
+                    dtype=self.dtype,
+                    attr=fluid.ParamAttr(name="bow_out_fc.b_0"),
+                    is_bias=True)
+        else:
+            bow_out_bias_attr = fluid.ParamAttr(name="bow_out_fc.b_0") if self.cls_bias else False
+            fc_out = layers.fc(input=bow_trans_feat,
+                               size=self.vocab_size,
+                               param_attr=fluid.ParamAttr(
+                                   name="bow_out_fc.w_0",
+                                   initializer=self.param_initializer),
+                               bias_attr=bow_out_bias_attr)
+        return fc_out
+
     def _get_metrics(self, inputs, outputs):
         metrics = super(Plato, self)._get_metrics(inputs, outputs)
+
         if self.use_bow:
-            fc_out = self._calc_bow_logits(outputs["enc_out"], inputs["bow_pos"])
+            fc_out = self._calc_bow_logits(outputs["enc_out"], outputs["checkpoints"], inputs["bow_pos"])
             bow_loss = layers.softmax_with_cross_entropy(
                 logits=fc_out, label=inputs["bow_label"])
             mean_bow_loss = layers.mean(bow_loss)

@@ -49,22 +49,26 @@ class DialogReader(object):
         group.add_argument("--random_seed", type=int, default=11)
         group.add_argument("--sort_pool_size", type=int, default=2 ** 16)
 
-        tokenization.SentencePieceTokenizer.add_cmdline_args(parser)
+        group = parser.add_argument_group("Tokenizer")
+        group.add_argument("--tokenizer", type=str, default="SentencePieceTokenizer")
+        args, _ = parser.parse_known_args()
+        tokenizer_cls = getattr(tokenization, args.tokenizer)
+        tokenizer_cls.add_cmdline_args(parser)
         return group
 
     def __init__(self, args):
-        self.tokenizer = tokenization.SentencePieceTokenizer(args)
+        tokenizer_cls = getattr(tokenization, args.tokenizer)
+        self.tokenizer = tokenizer_cls(args)
         self.vocab = self.tokenizer.vocab
         self.pad_id = args.pad_id = self.vocab["[PAD]"]
         self.bos_id = args.bos_id = self.vocab["[CLS]"]
         self.eos_id = args.eos_id = self.vocab["[SEP]"]
         self.unk_id = args.unk_id = self.vocab["[UNK]"]
         self.mask_id = args.mask_id = self.vocab["[MASK]"]
-        self.vocab_size = args.vocab_size
+        self.vocab_size = args.get("vocab_size", 0)
         self.max_src_len = args.max_src_len
         self.max_tgt_len = args.max_tgt_len
         self.truncate_first_turn = args.truncate_first_turn
-        self.max_seq_len = args.max_seq_len
         self.file_format = args.file_format
         self.data_format = args.data_format
         self.in_tokens = args.in_tokens
@@ -81,11 +85,8 @@ class DialogReader(object):
         self.num_examples = 0
 
         # model related
-        self.use_role = args.use_role
 
         self.fields = ["token_ids", "type_ids", "pos_ids"]
-        if args.use_role:
-            self.fields.append("role_ids")
         self.num_numerical_fields = len(self.fields)
         self.fields += ["tgt_start_idx", "data_id"]
         self.sort_key = lambda record: [len(record.token_ids)]
@@ -103,18 +104,11 @@ class DialogReader(object):
         # process src
         src_token_ids = []
         src_pos_ids = []
-        if self.use_role:
-            src_role_ids = []
-            role_id_list = []
 
         # tokenize src
         s_token_ids_list = []
         for s in example.src.split("[SEP]"):
             s = tokenization.convert_to_unicode(s).strip()
-            if self.use_role:
-                s, role_id = s.split("\1")
-                role_id = int(role_id)
-                role_id_list.append(role_id)
 
             if self.data_format == "tokenized":
                 s_tokens = s.split(" ")
@@ -141,22 +135,16 @@ class DialogReader(object):
         for i, s_token_ids in enumerate(s_token_ids_list[idx + 1:], idx + 1):
             src_token_ids += s_token_ids
             src_pos_ids += list(range(1, len(s_token_ids) + 1))
-            if self.use_role:
-                src_role_ids += [role_id_list[i]] * len(s_token_ids)
 
         src_token_ids = [self.bos_id] + src_token_ids
         src_type_ids = [0] * len(src_token_ids)
         src_pos_ids = [0] + src_pos_ids
-        if self.use_role:
-            src_role_ids = [0] + src_role_ids
         assert len(src_token_ids) == len(src_type_ids) == len(src_pos_ids), \
             "not len(src_token_ids) == len(src_type_ids) == len(src_pos_ids)"
 
         token_ids = src_token_ids
         type_ids = src_type_ids
         pos_ids = src_pos_ids
-        if self.use_role:
-            role_ids = src_role_ids
         tgt_start_idx = len(token_ids)
 
         if not is_infer:
@@ -178,16 +166,12 @@ class DialogReader(object):
             tgt_token_ids = [self.bos_id] + tgt_token_ids
             tgt_type_ids = [1] * len(tgt_token_ids)
             tgt_pos_ids = list(range(1, len(tgt_token_ids) + 1))
-            if self.use_role:
-                tgt_role_ids = [0] * len(tgt_token_ids)
             assert len(tgt_token_ids) == len(tgt_type_ids) == len(tgt_pos_ids), \
                 "not len(tgt_token_ids) == len(tgt_type_ids) == len(tgt_pos_ids)"
 
             token_ids += tgt_token_ids
             type_ids += tgt_type_ids
             pos_ids += tgt_pos_ids
-            if self.use_role:
-                role_ids += tgt_role_ids
 
         assert len(token_ids) == len(type_ids) == len(pos_ids), \
             "not len(token_ids) == len(type_ids) == len(pos_ids)"
@@ -203,8 +187,6 @@ class DialogReader(object):
             "type_ids": src_type_ids,
             "pos_ids": src_pos_ids
         }
-        if self.use_role:
-            field_values["role_ids"] = role_ids
         field_values["tgt_start_idx"] = tgt_start_idx
         field_values["data_id"] = example.data_id
 
@@ -369,20 +351,19 @@ class DialogReader(object):
             if is_infer or phase.endswith("test"):
                 self.features[phase] = {}
 
+            nonlocal reader
             if reader is None:
                 if self.file_format == "filelist":
-                    record_reader = self._read_files(input_file, phase, is_infer, not phase.endswith("test"))
+                    reader = self._read_files(input_file, phase, is_infer, not phase.endswith("test"))
                 else:
                     if phase == "train":
                         self.total_file = 1
                         self.current_file_index = 1
                         self.current_file = input_file
-                    record_reader = self._read_file(input_file, phase, is_infer)
-            else:
-                record_reader = reader
+                    reader = self._read_file(input_file, phase, is_infer)
 
             batch_reader = self._batch_reader(
-                record_reader,
+                reader,
                 phase,
                 is_infer,
                 sort_pool_size=self.sort_pool_size if not is_infer else 0)
@@ -420,24 +401,16 @@ class DialogReader(object):
         """
         Padding batch records and construct model's inputs.
         """
+        batch_size = len(batch_records)
         batch = {}
         batch_token_ids = [record.token_ids for record in batch_records]
         batch_type_ids = [record.type_ids for record in batch_records]
         batch_pos_ids = [record.pos_ids for record in batch_records]
-        if self.use_role:
-            batch_role_ids = [record.role_ids for record in batch_records]
-
-        batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
-
-        batch_size = len(batch_token_ids)
-
-        # padding
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
         batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
         batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-        if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
 
+        batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch["generation_mask"] = self._gen_self_attn_mask(
             batch_token_ids,
             batch_tgt_start_idx=batch_tgt_start_idx)
@@ -455,13 +428,11 @@ class DialogReader(object):
 
             batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
         else:
-            mask_return_list = mask(
+            batch["tgt_label"], batch["tgt_pos"] = mask(
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
                 sent_b_starts=batch_tgt_start_idx,
                 is_unidirectional=True)
-            batch["tgt_label"] = mask_return_list[0]
-            batch["tgt_pos"] = mask_return_list[1]
 
         batch_data_id = [record.data_id for record in batch_records]
         batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])

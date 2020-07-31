@@ -39,9 +39,9 @@ class Model(ABC):
         group.add_argument("--init_pretraining_params", type=str, default="")
 
         # Optimizer
-        group.add_argument("-lr", "--learning_rate", type=float, default=1e-4,
+        group.add_argument("-lr", "--learning_rate", type=float, default=1e-5,
                            help="The learning rate for optimizer.")
-        group.add_argument("--warmup_steps", type=int, default=4000,
+        group.add_argument("--warmup_steps", type=int, default=0,
                            help="The warmup steps.")
         group.add_argument("--weight_decay", type=float, default=0.0,
                            help="The weight decay for optimizer.")
@@ -98,11 +98,11 @@ class Model(ABC):
                 exec_strategy = fluid.ExecutionStrategy()
                 exec_strategy.use_experimental_executor = True
                 exec_strategy.num_threads = 4
-                exec_strategy.num_iteration_per_drop_scope = 30
+                exec_strategy.num_iteration_per_drop_scope = 1
 
                 dist_strategy = DistributedStrategy()
                 dist_strategy.exec_strategy = exec_strategy
-                dist_strategy.nccl_comm_num = 2
+                dist_strategy.nccl_comm_num = 1
                 dist_strategy.fuse_all_reduce_ops = True
                 if self.use_recompute:
                     dist_strategy.forward_recompute = True
@@ -131,7 +131,6 @@ class Model(ABC):
                     metrics["scheduled_lr"] = scheduled_lr
                     self.train_fetch_dict = metrics
 
-            self.exe.run(self.startup_program)
             self.program = self.train_program
             if self.is_distributed:
                 self.train_program = fleet.main_program
@@ -176,29 +175,38 @@ class Model(ABC):
         """
         Convert `inputs` into model's feed data format.
         """
-        inputs = {
-            k: to_lodtensor(v, self.place) if isinstance(v, list) else v
-            for k, v in inputs.items()
-        }
+        if isinstance(inputs, list):
+            # return list direclty which is used in `get_data_loader`.
+            return inputs
+        for k in inputs:
+            if isinstance(inputs[k], list):
+                inputs[k] = to_lodtensor(inputs[k], self.place)
         return inputs
 
-    def get_data_loader(self, is_infer=False):
+    def get_data_loader(self, generator=None, is_infer=False):
         """
         Return DataLoader.
+
+        If generator is not `None`, the data loader set it as the batch generator.
         """
         # TODO: support dygraph.
         if is_infer:
-            return fluid.io.DataLoader.from_generator(
-                feed_list=list(self.infer_feed_dict.values()),
-                capacity=64,
-                use_double_buffer=True,
-                iterable=True)
+            feed_name_list, feed_list = zip(*self.infer_feed_dict.items())
         else:
-            return fluid.io.DataLoader.from_generator(
-                feed_list=list(self.feed_dict.values()),
-                capacity=64,
-                use_double_buffer=True,
-                iterable=True)
+            feed_name_list, feed_list = zip(*self.feed_dict.items())
+        loader = fluid.io.DataLoader.from_generator(
+            feed_list=feed_list,
+            capacity=64,
+            use_double_buffer=True,
+            iterable=True)
+        if generator is not None:
+            def __wrapper__():
+                for batch in generator():
+                    batch = self._get_feed(batch)
+                    batch = [batch[name] for name in feed_name_list if name in batch]
+                    yield batch
+            loader.set_batch_generator(__wrapper__, self.place)
+        return loader
 
     @abstractmethod
     def forward(self, inputs, is_infer=False):
@@ -226,7 +234,6 @@ class Model(ABC):
         Optimize the model by metrics(mainly `metrics["loss"]`).
         """
         # TODO: support dygraph
-        grad_clip = fluid.clip.GradientClipByGlobalNorm(self.max_grad_norm)
         if self.warmup_steps > 0:
             scheduled_lr = layers.learning_rate_scheduler.noam_decay(
                 1 / (self.warmup_steps * (self.learning_rate ** 2)),
@@ -238,6 +245,7 @@ class Model(ABC):
                 value=self.learning_rate,
                 dtype="float32",
                 persistable=True)
+        grad_clip = fluid.clip.GradientClipByGlobalNorm(self.max_grad_norm)
 
         self.optimizer = AdamW(
             learning_rate=scheduled_lr,
@@ -250,12 +258,12 @@ class Model(ABC):
         self.optimizer.minimize(metrics["loss"])
         return scheduled_lr
 
-    def _execute(self, program: fluid.Program, feed, fetch_dict, return_numpy=True):
+    def _execute(self, program, feed, fetch_dict, **kwargs):
         """
         Execute program.
         """
         fetch_list = [var.name for var in fetch_dict.values()]
-        fetch_vars = self.exe.run(program, feed, fetch_list, return_numpy=return_numpy)
+        fetch_vars = self.exe.run(program, feed, fetch_list, **kwargs)
         return dict(zip(fetch_dict.keys(), fetch_vars))
 
     def train_step(self, inputs):
@@ -266,7 +274,8 @@ class Model(ABC):
         return self._execute(
             self.train_program,
             self._get_feed(inputs),
-            self.train_fetch_dict)
+            self.train_fetch_dict,
+            use_program_cache=True)
 
     def eval_step(self, inputs):
         """
@@ -288,7 +297,7 @@ class Model(ABC):
             self._get_feed(inputs, is_infer=True),
             self.infer_fetch_dict)
 
-    def save_infer_model(self, inference_model_path):
+    def save_inference_model(self, inference_model_path):
         """
         Save the inference model.
         """

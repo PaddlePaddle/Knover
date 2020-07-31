@@ -65,7 +65,6 @@ class NSPModel(UnifiedTransformer):
             token_ids=inputs["token_ids"],
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
-            role_ids=inputs.get("role_ids", None),
             generation_mask=inputs["attention_mask"]
         )
         return outputs

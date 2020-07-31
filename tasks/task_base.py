@@ -13,10 +13,7 @@
 # limitations under the License.
 """Task base."""
 
-from abc import (
-    abstractmethod,
-    ABC
-)
+from abc import abstractmethod, ABC
 
 from models.model_base import Model
 
@@ -75,15 +72,17 @@ class Task(ABC):
             ) / new_outputs["batch_size"]
         return new_outputs
 
-    def show_metrics(self, outputs):
+    def get_metrics(self, outputs):
         """
-        Show metrics.
+        Get metrics.
         """
         if outputs is None:
             raise ValueError("metrics is None")
         outputs = dict(outputs)
+        # pop statistics
         outputs.pop("batch_size", None)
-        metrics_message = []
-        for k in outputs:
-            metrics_message.append(": ".join([k, str(outputs[k])]))
-        return ", ".join(metrics_message)
+        return outputs
+
+    def get_data_loader(self, model, *args, is_infer=False, **kwargs):
+        generator = self.reader.data_generator(*args, is_infer=is_infer, **kwargs)
+        return model.get_data_loader(generator, is_infer)

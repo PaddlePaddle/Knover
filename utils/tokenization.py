@@ -14,11 +14,10 @@
 """Tokenization classes."""
 
 import collections
-import unicodedata
+import json
 import sentencepiece as spm
 import six
-import json
-import traceback
+import unicodedata
 
 from utils.args import str2bool
 
@@ -130,7 +129,7 @@ class SentencePieceTokenizer(object):
         """Add cmdline argurments."""
         group = parser.add_argument_group("Tokenizer")
         group.add_argument("--vocab_path", type=str, required=True)
-        group.add_argument("--do_lower_case", type=str2bool, default=True)
+        group.add_argument("--do_lower_case", type=str2bool, default=False)
         group.add_argument("--spm_model_file", type=str, required=True)
         return group
 

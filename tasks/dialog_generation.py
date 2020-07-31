@@ -268,7 +268,7 @@ class DialogGeneration(Task):
             "tokens_num": tokens_num + part_tokens_num
         }
         for k in outputs:
-            if k.startswith("tokens_"):
+            if k.startswith("token_"):
                 new_outputs[k] = (
                     outputs[k] * tokens_num + part_outputs[k] * part_tokens_num
                 ) / new_outputs["tokens_num"]
@@ -278,21 +278,21 @@ class DialogGeneration(Task):
                 ) / new_outputs["batch_size"]
         return new_outputs
 
-    def show_metrics(self, outputs):
+    def get_metrics(self, outputs):
         """
-        Show evaluation outputs.
+        Get metrics.
         """
         if outputs is None:
             raise ValueError("metrics is None")
         outputs = dict(outputs)
         outputs.pop("batch_size", None)
         outputs.pop("tokens_num", None)
-        metrics_message = []
+        metrics = {}
         for k in outputs:
             if k.startswith("token_"):
-                metrics_message.append(": ".join([k[6:], str(outputs[k])]))
+                metrics[k[6:]] = outputs[k]
             else:
-                metrics_message.append(": ".join([k, str(outputs[k])]))
+                metrics[k] = outputs[k]
             if k == "token_lm_loss":
-                metrics_message.append(": ".join(["ppl", str(math.exp(outputs[k]))]))
-        return ", ".join(metrics_message)
+                metrics["ppl"] = math.exp(outputs[k])
+        return metrics

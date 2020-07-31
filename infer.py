@@ -25,7 +25,7 @@ import paddle.fluid as fluid
 
 import models
 import tasks
-from utils import check_cuda
+from utils import check_cuda, Timer
 from utils.args import parse_args, str2bool
 
 
@@ -39,7 +39,7 @@ def setup_args():
     parser.add_argument("--infer_file", type=str, required=True)
     parser.add_argument("--output_name", type=str, required=True)
 
-    parser.add_argument("--skip_steps", type=int, default=1)
+    parser.add_argument("--log_steps", type=int, default=1)
 
     models.add_cmdline_args(parser)
     tasks.add_cmdline_args(parser)
@@ -69,31 +69,34 @@ def infer(args):
     model = models.create_model(args, place)
     infer_generator = task.reader.data_generator(
         input_file=args.infer_file,
+        num_part=dev_count,
+        part_id=gpu_id,
         phase=phase,
         is_infer=True
     )
 
     # run inference
-    begin = time.time()
+    timer = Timer()
+    timer.start()
     infer_out = {}
-    for steps, data in enumerate(infer_generator(), 1):
+    for step, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
         for info in predictions:
             infer_out[info["data_id"]] = info
-        if steps % args.skip_steps == 0:
-            time_cost = time.time() - begin
-            print(f"[infer] steps: {steps}, time: {time_cost:.3f}, "
-                  f"speed: {steps / time_cost:.3f} steps/s")
+        if step % args.log_steps == 0:
+            time_cost = timer.pass_time
+            print(f"\tstep: {step}, time: {time_cost:.3f}, "
+                  f"speed: {step / time_cost:.3f} steps/s")
 
-    time_cost = time.time() - begin
-    print(f"[infer] steps: {steps} time cost: {time_cost}, "
-          f"speed: {steps / time_cost} steps/s")
+    time_cost = timer.pass_time
+    print(f"[infer] steps: {step} time cost: {time_cost}, "
+          f"speed: {step / time_cost} steps/s")
 
     if args.is_distributed:
         # merge inference outputs in distributed mode.
         part_file = os.path.join(args.save_path, f"inference_output.part_{gpu_id}")
         with open(part_file, "w") as fp:
-            json.dump(predictions, fp, ensure_ascii=False)
+            json.dump(infer_out, fp, ensure_ascii=False)
         part_finish_file = os.path.join(args.save_path, f"inference_output.part_{gpu_id}.finish")
         with open(part_finish_file, "w"):
             pass
@@ -121,7 +124,8 @@ def infer(args):
         inference_output = os.path.join(args.save_path, "inference_output.txt")
         with open(inference_output, "w") as f:
             for data_id in sorted(infer_out.keys(), key=lambda x: int(x)):
-                f.write(infer_out[data_id][args.output_name] + "\n")
+                f.write(str(infer_out[data_id][args.output_name]) + "\n")
+        print(f"save inference result into: {inference_output}")
 
     return
 

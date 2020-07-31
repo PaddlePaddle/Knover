@@ -67,8 +67,6 @@ class NSPReader(DialogReader):
                 field_values["token_ids"] = pool[i].token_ids[:idx_i] + pool[j].token_ids[idx_j:]
                 field_values["type_ids"] = pool[i].type_ids[:idx_i] + pool[j].type_ids[idx_j:]
                 field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
-                if self.use_role:
-                    field_values["role_ids"] = pool[i].role_ids[:idx_i] + pool[j].role_ids[idx_j:]
                 neg_record = self.Record(
                     **field_values,
                     tgt_start_idx=idx_i,
@@ -111,8 +109,6 @@ class NSPReader(DialogReader):
         batch_token_ids = [record.token_ids for record in batch_records]
         batch_type_ids = [record.type_ids for record in batch_records]
         batch_pos_ids = [record.pos_ids for record in batch_records]
-        if self.use_role:
-            batch_role_ids = [record.role_ids for record in batch_records]
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch_label = [record.label for record in batch_records]
 
@@ -120,8 +116,6 @@ class NSPReader(DialogReader):
             batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
             batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
             batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-            if self.use_role:
-                batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
             tgt_label, tgt_pos, label_pos = mask(
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
@@ -145,8 +139,6 @@ class NSPReader(DialogReader):
             batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
             batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
             batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-            if self.use_role:
-                batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
             attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
 
         batch["attention_mask"] = attention_mask

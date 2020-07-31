@@ -41,6 +41,7 @@ def setup_args():
     parser.add_argument("--train_file", type=str, required=True)
     parser.add_argument("--valid_file", type=str, required=True)
 
+    parser.add_argument("--start_step", type=int, default=0)
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--log_steps", type=int, default=100)
     parser.add_argument("--validation_steps", type=int, default=1000)
@@ -75,14 +76,16 @@ def train(args):
 
     task = tasks.create_task(args)
     model = models.create_model(args, place)
-    train_generator = task.reader.data_generator(
+    train_generator = task.get_data_loader(
+        model,
         input_file=args.train_file,
         num_epochs=args.num_epochs,
         num_part=trainers_num,
         part_id=trainer_id,
         phase="train"
     )
-    valid_generator = task.reader.data_generator(
+    valid_generator = task.get_data_loader(
+        model,
         input_file=args.valid_file,
         num_part=dev_count,
         part_id=gpu_id,
@@ -90,39 +93,47 @@ def train(args):
     )
 
     # run training
-    model_timer = Timer()
-    for step, data in enumerate(train_generator(), 1):
-        model_timer.start()
-        metrics = task.train_step(model, data)
-        model_timer.pause()
+    timer = Timer()
+    timer.start()
+    for step, data in enumerate(train_generator(), args.start_step + 1):
+        outputs = task.train_step(model, data)
+        timer.pause()
         if step % args.log_steps == 0:
-            time_cost = model_timer.pass_time
+            time_cost = timer.pass_time
             current_epoch, current_file_index, total_file = task.reader.get_train_progress()
             print(f"[train][{current_epoch}] progress: {current_file_index}/{total_file} "
                   f"step: {step}, time: {time_cost:.3f}, "
                   f"speed: {args.log_steps / time_cost:.3f} steps/s")
-            print("\tcurrent lr:", metrics.pop('scheduled_lr'))
-            print("\t" + task.show_metrics(metrics))
-            model_timer.reset()
+            print(f"\tcurrent lr: {outputs.pop('scheduled_lr'):.7f}")
+            metrics = task.get_metrics(outputs)
+            print("\t" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
+            timer.reset()
 
         if step % args.validation_steps == 0:
-            evaluate(task, model, valid_generator, args, dev_count, gpu_id)
+            evaluate(task, model, valid_generator, args, dev_count, gpu_id, step)
 
-        if step % args.save_steps == 0:
+        if step % args.save_steps == 0 and trainer_id == 0:
             save_path = f"{args.save_path}/step_{step}"
             model.save(save_path, is_checkpoint=True)
+            with open(save_path + ".finish", "w") as f:
+                pass
+
+        timer.start()
 
 
-def evaluate(task, model, generator, args, dev_count, gpu_id):
+def evaluate(task, model, generator, args, dev_count, gpu_id, training_step):
     outputs = None
     print("=" * 80)
     print("Evaluation:")
+    timer = Timer()
+    timer.start()
     for step, data in enumerate(generator(), 1):
         part_outputs = task.eval_step(model, data)
         outputs = task.merge_mertrics_and_statistics(outputs, part_outputs)
 
         if step % args.log_steps == 0:
-            print(f"\tstep {step}:", task.show_metrics(outputs))
+            metrics = task.get_metrics(outputs)
+            print(f"\tstep {step}:" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
 
     if args.is_distributed:
         # merge evaluation outputs in distributed mode.
@@ -151,7 +162,9 @@ def evaluate(task, model, generator, args, dev_count, gpu_id):
             subprocess.getoutput("rm " + os.path.join(args.save_path, f"evaluation_output.part*"))
 
     if gpu_id == 0:
-        print("[Evaluation]", task.show_metrics(outputs))
+        metrics = task.get_metrics(outputs)
+        print(f"[Evaluation][{training_step}]" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
+    print(f"\ttime cost: {timer.pass_time:.3f}")
     print("=" * 80)
     return
 

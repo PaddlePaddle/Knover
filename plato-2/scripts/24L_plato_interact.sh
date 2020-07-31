@@ -3,30 +3,40 @@ set -eux
 
 export CUDA_VISIBLE_DEVICES=0
 
-
-SAVE_PATH=./plato-2/output
-
+# change to Knover working directory
 SCRIPT=`realpath "$0"`
 KNOVER_DIR=`dirname ${SCRIPT}`/../..
 cd $KNOVER_DIR
 
-MODEL_SIZE=24L
+model_size=24L
 
-mkdir -p ${SAVE_PATH}
+export vocab_path=./package/dialog_en/vocab.txt
+export spm_model_file=./package/dialog_en/spm.model
+export config_path=./package/dialog_en/plato/${model_size}.json
 
-if [ ! -e "${MODEL_SIZE}/NSP/__model__" ]; then
-    sh scripts/local/save_nsp_model.sh ${MODEL_SIZE}
+nsp_init_params=./${model_size}/NSP
+if [ ! -e "${nsp_init_params}/__model__" ]; then
+    export model=NSPModel
+    export task=NextSentencePrediction
+    export init_params=$nsp_init_params
+    ./scripts/local/save_inference_model.sh
 fi
+
+export model=Plato
+export init_params=./${model_size}/Plato
+export infer_file=./data/dailydialog_test_60.tsv
+export output_name="response"
+export batch_size=10
+export infer_args="\
+    --do_generation true \
+    --nsp_inference_model_path ${nsp_init_params} \
+    --ranking_score nsp_score"
 
 python -u \
     ./interaction.py \
-    --model Plato \
-    --vocab_path ./package/dialog_en/vocab.txt \
-    --do_lower_case false \
-    --init_pretraining_params ./${MODEL_SIZE}/Plato \
-    --spm_model_file ./package/dialog_en/spm.model \
-    --nsp_inference_model_path ./${MODEL_SIZE}/NSP \
-    --ranking_score nsp_score \
-    --do_generation true \
-    --batch_size 1 \
-    --config_path ./package/dialog_en/plato/${MODEL_SIZE}.json
+    --model ${model} \
+    --vocab_path ${vocab_path} \
+    --init_pretraining_params ${init_params} \
+    --spm_model_file ${spm_model_file} \
+    $infer_args \
+    --config_path ${config_path}

@@ -70,3 +70,9 @@ You can define other arguments in training script, such as:
 ```
 train_args="--max_src_len 384 --max_seq_len 512"
 ```
+
+## Disclaimer
+This project aims to facilitate further research progress in dialogue generation. Baidu is not responsible for the 3rd party's generation with the pre-trained system.
+
+## Contact information
+For help or issues using Knover, please submit a GitHub issue.

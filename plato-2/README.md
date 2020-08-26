@@ -14,8 +14,8 @@ To build a high-quality open-domain chatbot, we introduce the effective training
 - sentencepiece
 - termcolor
 
-- CUDA == 10.1 (recommand)
-- CUDNN == 7.6 (recommand)
+- CUDA == 10.1 (recommend)
+- CUDNN == 7.6 (recommend)
 - NCCL
 ```
 

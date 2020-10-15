@@ -72,6 +72,9 @@ def truncate_ids_list(ids_list, cut_len=512, truncate_first_turn=False):
 def convert_sample_to_numerical(input_data, max_seq_len=512, max_response_len=128, truncate_first_turn=False, is_test=False):
     assert "type" in input_data and "context" in input_data and "response" in input_data and "knowledge" in input_data
 
+    for key in sample:
+        sample[key] = re.sub("  +", " ", sample[key])
+
     data_type = input_data["type"]
     context = input_data["context"]
     response = input_data["response"]
@@ -103,9 +106,9 @@ def convert_sample_to_numerical(input_data, max_seq_len=512, max_response_len=12
             context_ids_list.append(utterance_ids)
     
     truncate_type, new_context_ids_list = truncate_ids_list(context_ids_list, max_seq_len - max_response_len - 2, truncate_first_turn=truncate_first_turn)
-    truncate_type_stat[cut_type] += 1
+    truncate_type_stat[truncate_type] += 1
 
-    if cut_type == 1 and not is_test:
+    if truncate_type == 1 and not is_test:
         return None
 
     # deal context tokens
@@ -132,7 +135,7 @@ def convert_sample_to_numerical(input_data, max_seq_len=512, max_response_len=12
     return output_list
 
 def to_sample_for_douban(input_file, data_type="chitchat", is_test=False):
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8') as fp:
         for line in fp:
             data = json.loads(line.strip())
 
@@ -140,22 +143,22 @@ def to_sample_for_douban(input_file, data_type="chitchat", is_test=False):
             response = data["response"] if "response" in data else ""
 
             if not is_test:
-	            sample = {"type": data_type,
-	                      "knowledge": "",
-	                      "context": history,
-	                      "response": response}
+                sample = {"type": data_type,
+                          "knowledge": "",
+                          "context": history,
+                          "response": response}
 
-	            yield sample
-	        else:
-	        	sample = {"type": data_type,
-	                      "knowledge": "",
-	                      "context": '\t'.join(history),
-	                      "response": response}
+                yield sample
+            else:
+                sample = {"type": data_type,
+                          "knowledge": "",
+                          "context": '\t'.join(history),
+                          "response": response}
 
-	            yield sample
+                yield sample
 
 def to_sample_for_lccc(input_file, data_type="chitchat", is_test=False):
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8') as fp:
         for line in fp:
             data = json.loads(line.strip())
             if not is_test:
@@ -180,7 +183,7 @@ def to_sample_for_lccc(input_file, data_type="chitchat", is_test=False):
                 yield sample
     
 def to_sample_for_weibo(input_file, data_type="chitchat", is_test=False):
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8') as fp:
         for line in fp:
             data = json.loads(line.strip())
 
@@ -188,23 +191,23 @@ def to_sample_for_weibo(input_file, data_type="chitchat", is_test=False):
             response = data["response"] if "response" in data else ""
 
             if not is_test:
-	            sample = {"type": data_type,
-	                    "knowledge": "",
-	                    "context": history,
-	                    "response": response}
+                sample = {"type": data_type,
+                        "knowledge": "",
+                        "context": history,
+                        "response": response}
 
-	            yield sample
+                yield sample
 
-	        else:
-	        	sample = {"type": data_type,
-	                    "knowledge": "",
-	                    "context": '\t'.join(history),
-	                    "response": response}
+            else:
+                sample = {"type": data_type,
+                        "knowledge": "",
+                        "context": '\t'.join(history),
+                        "response": response}
 
-	            yield sample
+                yield sample
     
 def to_sample_for_duconv(input_file, data_type="knowledge", is_test=False):
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8') as fp:
         for line in fp:
             data = json.loads(line.strip())
 
@@ -235,7 +238,7 @@ def to_sample_for_duconv(input_file, data_type="knowledge", is_test=False):
                 yield sample
     
 def to_sample_for_kdconv(input_file, data_type="knowledge", is_test=False):
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8') as fp:
         for line in fp:
             data = json.loads(line.strip())
             knowledge = data["knowledge"]
@@ -243,7 +246,7 @@ def to_sample_for_kdconv(input_file, data_type="knowledge", is_test=False):
             knowledge = ' '.join([' '.join(spo) for spo in knowledge])
 
             if not is_test:
-            	conversation = data["conversation"]
+                conversation = data["conversation"]
                 for i in range(len(conversation)):
                     sample = {"type": data_type,
                               "knowledge": knowledge,
@@ -263,31 +266,31 @@ def to_sample_for_kdconv(input_file, data_type="knowledge", is_test=False):
                 yield sample
     
 def to_sample_for_tencent(input_file, data_type="knowledge", is_test=False):
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8', errors="ignore") as fp:
         for line in fp:
             data = json.loads(line.strip())
 
             knowledge = data["knowledge"]
             history = data["history"]
-            response = data["response"]
+            response = data["response"] if "response" in data else ""
             
             if not is_test:
-	            knowledge = ' '.join(knowledge)
-	            sample = {"type": data_type,
-	                      "knowledge": knowledge,
-	                      "context": history,
-	                      "response": response}
+                knowledge = ' '.join(knowledge)
+                sample = {"type": data_type,
+                          "knowledge": knowledge,
+                          "context": history,
+                          "response": response}
 
-	            yield sample
+                yield sample
 
-	        else:
-	        	knowledge = ' '.join([' '.join(item) for item in knowledge])
-	        	sample = {"type": data_type,
-	                      "knowledge": knowledge,
-	                      "context": '\t'.join(history),
-	                      "response": response}
+            else:
+                knowledge = ' '.join([' '.join(item) for item in knowledge])
+                sample = {"type": data_type,
+                          "knowledge": knowledge,
+                          "context": '\t'.join(history),
+                          "response": response}
 
-	            yield sample
+                yield sample
     
 def to_sample_for_durecdial(input_file, data_type="recommend", is_test=False):
     def goal_processing(goal):
@@ -347,7 +350,7 @@ def to_sample_for_durecdial(input_file, data_type="recommend", is_test=False):
             utterance = ' '.join(utterance)
             utterance_list[i] = utterance
 
-    with open(input_file) as fp:
+    with open(input_file, encoding='utf8') as fp:
         for line in fp:
             data = json.loads(line.strip())
 
@@ -397,27 +400,59 @@ def to_sample_for_durecdial(input_file, data_type="recommend", is_test=False):
 
 if __name__ == '__main__':
     # change the input and output files to your real files
-    fout = open("numerical.txt", 'w')
-    data_list = [
-                    ["douban测试集", to_sample_for_douban, False, True],
-                    ["lccc测试集", to_sample_for_lccc, False, True],
-                    ["weibo测试集", to_sample_for_weibo, False, True],
-                    ["duconv测试集", to_sample_for_duconv, True, True],
-                    ["kdconv测试集", to_sample_for_kdconv, True, True],
-                    ["tencent测试集", to_sample_for_tencent, True, True],
-                    ["DuRecDial测试集", to_sample_for_durecdial, True, True]
-                ]
-    for [input_file, handle_method, truncate_first_turn, is_test]:
-        for sample in handle_method(input_file, is_test=is_test):
-            numerical = convert_sample_to_numerical(sample, truncate_first_turn=truncate_first_turn, is_test=is_test)
-            if numerical is not None:
-                fout.write(';'.join(result) + "\n")
-    fout.close()
+    data_process_list = [
+                            [
+                                [
+                                    ["./data/luge-dialogue/weibo/train.txt", to_sample_for_weibo, False, False],
+                                    ["./data/luge-dialogue/douban/train.txt", to_sample_for_douban, False, False],
+                                    ["./data/luge-dialogue/LCCC/LCCD_train.json", to_sample_for_lccc, False, False],
+                                    ["./data/luge-dialogue/duconv/train.txt", to_sample_for_duconv, True, False],
+                                    ["./data/luge-dialogue/kdconv/train.txt", to_sample_for_kdconv, True, False],
+                                    ["./data/luge-dialogue/tencent/train.txt", to_sample_for_tencent, True, False],
+                                    ["./data/luge-dialogue/DuRecDial/train.txt", to_sample_for_durecdial, True, False]
+                                ],
+                                "./data/train.txt",
+                            ],
+                            [
+                                [
+                                    ["./data/luge-dialogue/weibo/dev.txt", to_sample_for_weibo, False, False],
+                                    ["./data/luge-dialogue/douban/dev.txt", to_sample_for_douban, False, False],
+                                    ["./data/luge-dialogue/LCCC/LCCD_dev.json", to_sample_for_lccc, False, False],
+                                    ["./data/luge-dialogue/duconv/dev.txt", to_sample_for_duconv, True, False],
+                                    ["./data/luge-dialogue/kdconv/dev.txt", to_sample_for_kdconv, True, False],
+                                    ["./data/luge-dialogue/tencent/dev.txt", to_sample_for_tencent, True, False],
+                                    ["./data/luge-dialogue/DuRecDial/dev.txt", to_sample_for_durecdial, True, False]
+                                ],
+                                "./data/valid.txt",
+                            ],
+                            [
+                                [
+                                    ["./data/luge-dialogue/weibo/test.txt", to_sample_for_weibo, False, True],
+                                    ["./data/luge-dialogue/douban/test.txt", to_sample_for_douban, False, True],
+                                    ["./data/luge-dialogue/LCCC/test.txt", to_sample_for_lccc, False, True],
+                                    ["./data/luge-dialogue/duconv/test.txt", to_sample_for_duconv, True, True],
+                                    ["./data/luge-dialogue/kdconv/test.txt", to_sample_for_kdconv, True, True],
+                                    ["./data/luge-dialogue/tencent/test.txt", to_sample_for_tencent, True, True],
+                                    ["./data/luge-dialogue/DuRecDial/test.txt", to_sample_for_durecdial, True, True]
+                                ],
+                                "./data/test.txt",
+                            ],
+                        ]
+    for [input_list, output_file] in data_process_list:
+        truncate_type_stat[0] = truncate_type_stat[1] = truncate_type_stat[2] = truncate_type_stat[3] = truncate_type_stat[4] = 0
+        fout = open(output_file, 'w')
+        for [input_file, handle_method, truncate_first_turn, is_test] in input_list:
+            for sample in handle_method(input_file, is_test=is_test):
+                numerical = convert_sample_to_numerical(sample, truncate_first_turn=truncate_first_turn, is_test=is_test)
+                if numerical is not None:
+                    fout.write(';'.join(numerical) + "\n")   
+        fout.close()
 
-    T = truncate_type_stat[0] + truncate_type_stat[1] + truncate_type_stat[2] + truncate_type_stat[3] + truncate_type_stat[4]
-    FT = float(T)
-    T1 = truncate_type_stat[1]
-    T2 = truncate_type_stat[2]
-    T3 = truncate_type_stat[3]
-    T4 = truncate_type_stat[4]
-    sys.stderr.write('Total num : %d \n\ttruncate type 1: %d rate(%.4f)\n\ttruncate tye 2: %d rate(%.4f)\n\ttruncate type 3: %d rate(%.4f)\n\ttruncate type 4: %d rate(%.4f)\n' % (T, T1, (T1/FT), T2, (T2/FT), T3, (T3/FT), T4, (T4/FT)))
+        T = truncate_type_stat[0] + truncate_type_stat[1] + truncate_type_stat[2] + truncate_type_stat[3] + truncate_type_stat[4]
+        FT = float(T)
+        T1 = truncate_type_stat[1]
+        T2 = truncate_type_stat[2]
+        T3 = truncate_type_stat[3]
+        T4 = truncate_type_stat[4]
+        sys.stderr.write('Total num : %d \n\ttruncate type 1: %d rate(%.4f)\n\ttruncate tye 2: %d rate(%.4f)\n\ttruncate type 3: %d rate(%.4f)\n\ttruncate type 4: %d rate(%.4f)\n' % (T, T1, (T1/FT), T2, (T2/FT), T3, (T3/FT), T4, (T4/FT)))
+

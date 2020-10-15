@@ -362,6 +362,8 @@ def to_sample_for_durecdial(input_file, data_type="recommend", is_test=False):
             goal = goal_processing(goal)
             user_profile = user_profile_processing(user_profile)
 
+            bot_mode = 0 if goal[0][0] == '寒暄' else 1
+
             goal = ' '.join([' '.join(g) for g in goal])
             user_profile = ' '.join([' '.join(up) for up in user_profile])
             knowledge = ' '.join([' '.join(spo) for spo in knowledge])
@@ -370,8 +372,6 @@ def to_sample_for_durecdial(input_file, data_type="recommend", is_test=False):
 
             if not is_test:
                 conversation = data["conversation"]
-                
-                bot_mode = 0 if goal[0][0] == '寒暄' else 1
                 
                 strip_utterance(conversation)
 

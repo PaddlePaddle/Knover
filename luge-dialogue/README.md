@@ -25,9 +25,9 @@ In these model, three special tokens are used to represent subtasks in the compe
 
 ## Baseline of the finetuning model
 
-|   F1   |  BLEU1 / BLEU2  | DISTINCT1/DISTINCT2 |
-| :----: | :-------------: | :-----------------: |
-| 10.84% | 7.170% / 2.368% |   0.515% / 5.393%   |
+|  F1   | BLEU1 / BLEU2 | DISTINCT1/DISTINCT2 |
+| :---: | :-----------: | :-----------------: |
+| 15.44 | 0.059 / 0.027 |    0.044 / 0.217    |
 
 
 

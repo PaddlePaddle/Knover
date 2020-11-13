@@ -296,7 +296,7 @@ class UnifiedTransformer(Model):
             outputs["checkpoints"] = generation_checkpoints
         return outputs
 
-    def _calc_logits(self, enc_out, checkpoints=None, seq_pos=None):
+    def _calc_logits(self, enc_out, seq_pos=None):
         """Get the logits of generation."""
         enc_out = layers.reshape(
             x=enc_out, shape=[-1, self.hidden_size])
@@ -317,9 +317,6 @@ class UnifiedTransformer(Model):
 
         seq_trans_feat = pre_process_layer(
             seq_trans_feat, self.post_cls_cmd, name="mask_lm_trans")
-
-        if checkpoints is not None:
-            checkpoints.append(seq_trans_feat)
 
         if self.weight_sharing:
             fc_out = layers.matmul(
@@ -346,7 +343,7 @@ class UnifiedTransformer(Model):
     def _get_metrics(self, inputs, outputs):
         metrics = {}
 
-        fc_out = self._calc_logits(outputs["enc_out"], outputs["checkpoints"], inputs["tgt_pos"])
+        fc_out = self._calc_logits(outputs["enc_out"], inputs["tgt_pos"])
         tgt_lm_loss = layers.softmax_with_cross_entropy(
             logits=fc_out, label=inputs["tgt_label"])
         mean_tgt_lm_loss = layers.mean(tgt_lm_loss)

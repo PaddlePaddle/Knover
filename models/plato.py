@@ -199,7 +199,7 @@ class Plato(UnifiedTransformer):
             outputs["checkpoints"].extend(generation_checkpoints)
         return outputs
 
-    def _calc_bow_logits(self, enc_out, checkpoints, bow_pos):
+    def _calc_bow_logits(self, enc_out, bow_pos):
         """Get the logits of generation."""
         bow_feat = layers.slice(
             input=enc_out, axes=[1], starts=[0], ends=[1])
@@ -219,8 +219,6 @@ class Plato(UnifiedTransformer):
 
         bow_trans_feat = pre_process_layer(
             bow_trans_feat, self.post_cls_cmd, name="bow_trans")
-
-        checkpoints.append(bow_trans_feat)
 
         if self.weight_sharing:
             fc_out = layers.matmul(
@@ -248,7 +246,7 @@ class Plato(UnifiedTransformer):
         metrics = super(Plato, self)._get_metrics(inputs, outputs)
 
         if self.use_bow:
-            fc_out = self._calc_bow_logits(outputs["enc_out"], outputs["checkpoints"], inputs["bow_pos"])
+            fc_out = self._calc_bow_logits(outputs["enc_out"], inputs["bow_pos"])
             bow_loss = layers.softmax_with_cross_entropy(
                 logits=fc_out, label=inputs["bow_label"])
             mean_bow_loss = layers.mean(bow_loss)

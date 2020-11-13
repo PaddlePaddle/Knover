@@ -59,6 +59,8 @@ This section defines training related settings:
 
 `init_params`: initialized parameters.
 
+`init_checkpoint`: initialized checkpoints (contains not only the parameters of the model, but also the persitables of the optimizer) . You can also set `train_args="--start_step 1000"` for better display of log (if you continue training from step 1000) , but this is not necessary.
+
 `batch_size`, `lr`, `num_epochs` and so on.
 
 `log_dir`: the output path of training logs, include the log file (`${log_dir}/workerlog.${DEV_ID}`) of each GPU trainer. If `log_dir=""`, then the output of all GPU trainers will output to standard output.

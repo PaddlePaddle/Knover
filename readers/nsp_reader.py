@@ -42,6 +42,7 @@ class NSPReader(DialogReader):
 
         self.attention_style = args.attention_style
         self.mix_negative_sample = args.mix_negative_sample
+        self.max_seq_len = args.max_seq_len
         return
 
     def _convert_example_to_record(self, example, is_infer):

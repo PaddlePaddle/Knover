@@ -27,9 +27,7 @@ __all__ = [
 
 
 def register_model(name):
-    """
-    Register a new model class.
-    """
+    """Register a new model class."""
 
     def __wrapped__(cls):
         if name in MODEL_REGISTRY:
@@ -43,9 +41,7 @@ def register_model(name):
 
 
 def create_model(args, place) -> Model:
-    """
-    Create a model.
-    """
+    """Create a model."""
     return MODEL_REGISTRY[args.model](args, place)
 
 
@@ -54,10 +50,12 @@ def add_cmdline_args(parser):
     group = parser.add_argument_group("Model")
 
     # Model
-    group.add_argument("--model", type=str, required=True)
+    group.add_argument("--model", type=str, required=True,
+                       help="The model type.")
 
     # Config
-    group.add_argument("--config_path", type=str, required=True)
+    group.add_argument("--config_path", type=str, required=True,
+                       help="The path of model configuration.")
 
     # Model related.
     args, _ = parser.parse_known_args()

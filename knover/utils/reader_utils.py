@@ -13,6 +13,8 @@
 # limitations under the License.
 """Reader utility."""
 
+import copy
+
 import numpy as np
 
 
@@ -27,15 +29,16 @@ def mask(batch_tokens,
          use_latent=False,
          use_bow=False):
     """
-    Add mask for batch_tokens, return out, mask_label, mask_pos;
-    Note: mask_pos responding the batch_tokens after padded;
+    Add mask for batch_tokens, return out, mask_label, mask_idx;
+    Note: mask_idx(masking index) responding the indices of masking token
+    in batch_tokens after padded;
     """
-    batch_tokens = np.copy(batch_tokens)
+    batch_tokens = copy.deepcopy(batch_tokens)
     max_len = max(map(len, batch_tokens))
     mask_label = []
-    mask_pos = []
+    mask_idx = []
     if labels is not None:
-        label_pos = []
+        label_idx = []
 
     if is_unidirectional:
         # unidirectional language model
@@ -48,17 +51,17 @@ def mask(batch_tokens,
             sent_b_index = sent_b_starts[sent_index] if sent_b_starts is not None else 0
             need_cal = True
             if labels is not None:
-                label_pos.append(sent_index * max_len + len(sent) - 1 + shift_len)
+                label_idx.append(sent_index * max_len + len(sent) - 1 + shift_len)
                 if labels[sent_index] == 0:
                     need_cal = False
             mask_label.extend(sent[sent_b_index + 1:])
-            mask_pos.extend([
+            mask_idx.extend([
                 sent_index * max_len + i + shift_len
                 for i in range(sent_b_index, len(sent) - 1)
             ])
         mask_label = np.array(mask_label).astype("int64").reshape([-1, 1])
-        mask_pos = np.array(mask_pos).astype("int64").reshape([-1, 1])
-        return_list = [mask_label, mask_pos]
+        mask_idx = np.array(mask_idx).astype("int64").reshape([-1, 1])
+        return_list = [mask_label, mask_idx]
 
         # latent related (bow label and pos)
         if use_latent and use_bow:
@@ -92,7 +95,7 @@ def mask(batch_tokens,
         for sent_index, sent in enumerate(batch_tokens):
             # add pair label position
             if labels is not None:
-                label_pos.append(sent_index * max_len)
+                label_idx.append(sent_index * max_len)
 
             # add mask label and position
             for token_index, token in enumerate(sent):
@@ -105,25 +108,25 @@ def mask(batch_tokens,
                     # mask
                     mask_label.append(sent[token_index])
                     sent[token_index] = mask_id
-                    mask_pos.append(sent_index * max_len + token_index)
+                    mask_idx.append(sent_index * max_len + token_index)
                 elif 0.015 < prob <= 0.03:
                     # random replace
                     mask_label.append(sent[token_index])
                     sent[token_index] = replace_ids[prob_index + token_index]
-                    mask_pos.append(sent_index * max_len + token_index)
+                    mask_idx.append(sent_index * max_len + token_index)
                 else:
                     # keep the original token
                     mask_label.append(sent[token_index])
-                    mask_pos.append(sent_index * max_len + token_index)
+                    mask_idx.append(sent_index * max_len + token_index)
 
             prob_index += len(sent)
 
         mask_label = np.array(mask_label).astype("int64").reshape([-1, 1])
-        mask_pos = np.array(mask_pos).astype("int64").reshape([-1, 1])
-        return_list = [batch_tokens, mask_label, mask_pos]
+        mask_idx = np.array(mask_idx).astype("int64").reshape([-1, 1])
+        return_list = [batch_tokens, mask_label, mask_idx]
 
     if labels is not None:
-        label_pos = np.array(label_pos).astype("int64").reshape([-1, 1])
-        assert len(labels) == len(label_pos)
-        return_list.append(label_pos)
+        label_idx = np.array(label_idx).astype("int64").reshape([-1, 1])
+        assert len(labels) == len(label_idx)
+        return_list.append(label_idx)
     return return_list

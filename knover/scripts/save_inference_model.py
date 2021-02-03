@@ -23,9 +23,7 @@ from knover.utils import check_cuda, parse_args
 
 
 def setup_args():
-    """
-    Setup arguments.
-    """
+    """Setup saving arguments."""
     parser = argparse.ArgumentParser()
 
     models.add_cmdline_args(parser)
@@ -41,9 +39,7 @@ def setup_args():
 
 
 def save(args):
-    """
-    Inference main function.
-    """
+    """Save inference model."""
     dev_count = 1
     gpu_id = 0
     place = fluid.CUDAPlace(gpu_id)

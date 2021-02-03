@@ -25,9 +25,7 @@ from knover.utils import check_cuda, parse_args
 
 
 def setup_args():
-    """
-    Setup arguments.
-    """
+    """Setup arguments."""
     parser = argparse.ArgumentParser()
 
     models.add_cmdline_args(parser)
@@ -41,15 +39,15 @@ def setup_args():
 
 
 def interact(args):
-    """
-    Inference main function.
-    """
+    """Interaction main function."""
     dev_count = 1
     gpu_id = 0
     place = fluid.CUDAPlace(gpu_id)
 
     task = DialogGeneration(args)
     model = models.create_model(args, place)
+
+    task.debug()
 
     Example = namedtuple("Example", ["src", "data_id"])
     context = []
@@ -65,6 +63,7 @@ def interact(args):
         else:
             context.append(user_utt)
             example = Example(src=" [SEP] ".join(context), data_id=0)
+            task.reader.features[0] = example
             record = task.reader._convert_example_to_record(example, is_infer=True)
             data = task.reader._pad_batch_records([record], is_infer=True)
             pred = task.infer_step(model, data)[0]

@@ -27,10 +27,8 @@ class PlatoReader(DialogReader):
         self.latent_type_size = args.latent_type_size
         self.use_bow = args.use_bow
 
-    def _pad_batch_records(self, batch_records, is_infer):
-        """
-        Padding batch records and construct model's inputs.
-        """
+    def _pad_batch_records(self, batch_records, is_infer, **kwargs):
+        """Padding a batch of records and construct model's inputs."""
         batch = {}
         batch_token_ids = [record.token_ids for record in batch_records]
         batch_type_ids = [record.type_ids for record in batch_records]
@@ -58,7 +56,7 @@ class PlatoReader(DialogReader):
 
         if is_infer:
             tgt_ids = np.array([[[self.bos_id]]] * batch_size, dtype="int64")
-            if self.continuous_position:
+            if self.position_style == "continuous":
                 tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
             else:
                 tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
@@ -67,8 +65,12 @@ class PlatoReader(DialogReader):
             batch["tgt_ids"] = tgt_ids.tolist()
             batch["tgt_pos"] = tgt_pos.tolist()
             batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
+            batch["latent_id"] = np.zeros([batch_size], dtype="int32")
 
             batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
+
+            batch_data_id = [record.data_id for record in batch_records]
+            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
         else:
             mask_return_list = mask(
                 batch_tokens=batch_token_ids,
@@ -78,11 +80,9 @@ class PlatoReader(DialogReader):
                 use_latent=True,
                 use_bow=self.use_bow)
             batch["tgt_label"] = mask_return_list[0]
-            batch["tgt_pos"] = mask_return_list[1]
+            batch["tgt_idx"] = mask_return_list[1]
             if self.use_bow:
                 batch["bow_label"] = mask_return_list[2]
-                batch["bow_pos"] = mask_return_list[3]
+                batch["bow_idx"] = mask_return_list[3]
 
-        batch_data_id = [record.data_id for record in batch_records]
-        batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
         return batch

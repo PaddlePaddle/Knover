@@ -13,7 +13,6 @@
 # limitations under the License.
 """Dialogue Reader."""
 
-import csv
 from collections import namedtuple
 from contextlib import contextmanager
 import gzip
@@ -34,18 +33,36 @@ class DialogReader(object):
     def add_cmdline_args(cls, parser):
         """Add cmdline argurments."""
         group = parser.add_argument_group("Reader")
-        group.add_argument("--max_src_len", type=int, default=128)
-        group.add_argument("--max_tgt_len", type=int, default=128)
-        group.add_argument("--truncate_first_turn", type=str2bool, default=False)
+        group.add_argument("--max_src_len", type=int, default=128,
+                           help="The maximum length of source sequence (means context in dialogue generation task).")
+        group.add_argument("--max_tgt_len", type=int, default=128,
+                           help="The maximum length of target sequence (means response in dialogue generation task).")
+        group.add_argument("--max_seq_len", type=int, default=256,
+                           help="The maximum length of sequence.")
+        group.add_argument("--truncate_first_turn", type=str2bool, default=False,
+                           help="Whether truncate the first turn.")
         group.add_argument("--file_format", type=str, default="file",
-                           choices=["file", "filelist"])
+                           choices=["file", "filelist"],
+                           help="The input file format.")
         group.add_argument("--data_format", type=str, default="raw",
-                           choices=["raw", "tokenized", "numerical"])
-        group.add_argument("--in_tokens", type=str2bool, default=False)
-        group.add_argument("--batch_size", type=int, default=16)
-        group.add_argument("--continuous_position", type=str2bool, default=True)
-        group.add_argument("--random_seed", type=int, default=11)
-        group.add_argument("--sort_pool_size", type=int, default=2 ** 16)
+                           choices=["raw", "tokenized", "numerical"],
+                           help="The data format of each file")
+        group.add_argument("--in_tokens", type=str2bool, default=False,
+                           help="Whether to batchify examples by the number of tokens.")
+        group.add_argument("--batch_size", type=int, default=16,
+                           help="The size of batches. If `in_tokens` is false, then batchify every X examples."
+                           "If `in_tokens` is true, then batchify examples which contains nearly X tokens.")
+        group.add_argument("--position_style", type=str, default="continuous",
+                           choices=["continuous", "relative"],
+                           help="The position encoding style.")
+        group.add_argument("--random_seed", type=int, default=11,
+                           help="The seed to control the data generation.")
+        group.add_argument("--shuffle_pool_size", type=int, default=0,
+                           help="The size of shuffle pool."
+                           "If it is positive, we will shuffle each X examples and then batchify them.")
+        group.add_argument("--sort_pool_size", type=int, default=2 ** 16,
+                           help="The size of sorting pool."
+                           "If it is positive, we will generate batches from sorted example pool (contains X examples).")
 
         group = parser.add_argument_group("Tokenizer")
         group.add_argument("--tokenizer", type=str, default="SentencePieceTokenizer")
@@ -71,8 +88,18 @@ class DialogReader(object):
         self.data_format = args.data_format
         self.in_tokens = args.in_tokens
         self.batch_size = args.batch_size
-        self.continuous_position = args.continuous_position
+        self.position_style = args.position_style
         self.sort_pool_size = args.sort_pool_size
+        self.shuffle_pool_size = args.shuffle_pool_size
+
+        self.reserve_example = args.get("reserve_example", False)
+
+        if self.shuffle_pool_size > 0 and self.sort_pool_size > 0:
+            raise ValueError(f"Cannot set `shuffle_pool_size = {self.shuffle_pool_size}`"
+                             f" and `sort_pool_size = ${self.sort_pool_size}` both positive.")
+
+        assert args.max_src_len + args.max_tgt_len <= args.max_seq_len, \
+            "args.max_src_len + args.max_tgt_len > args.max_seq_len"
 
         # random_seed must be set for data slicing when using multi-gpu
         self.global_rng = np.random.RandomState(args.random_seed)
@@ -91,22 +118,24 @@ class DialogReader(object):
 
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
 
-        self.features = {}
+        if self.reserve_example:
+            self.features = {}
         return
 
     def get_train_progress(self):
         """Gets progress for training phase."""
         return self.current_epoch, self.current_file_index, self.total_file
 
-    def _convert_example_to_record(self, example, is_infer):
+    def _parse_src(self, src):
+        """Parse source sequence."""
         # process src
         src_token_ids = []
         src_pos_ids = []
 
         # tokenize src
         s_token_ids_list = []
-        for s in example.src.split("[SEP]"):
-            s = tokenization.convert_to_unicode(s).strip()
+        for s in src.split("[SEP]"):
+            s = s.strip()
 
             if self.data_format == "tokenized":
                 s_tokens = s.split(" ")
@@ -134,57 +163,65 @@ class DialogReader(object):
             src_token_ids += s_token_ids
             src_pos_ids += list(range(1, len(s_token_ids) + 1))
 
-        src_token_ids = [self.bos_id] + src_token_ids
-        src_type_ids = [0] * len(src_token_ids)
-        src_pos_ids = [0] + src_pos_ids
-        assert len(src_token_ids) == len(src_type_ids) == len(src_pos_ids), \
-            "not len(src_token_ids) == len(src_type_ids) == len(src_pos_ids)"
+        field_values = {
+            "token_ids": [self.bos_id] + src_token_ids,
+            "type_ids": [0] * (len(src_token_ids) + 1),
+            "pos_ids": [0] + src_pos_ids
+        }
 
-        token_ids = src_token_ids
-        type_ids = src_type_ids
-        pos_ids = src_pos_ids
-        tgt_start_idx = len(token_ids)
+        for k in field_values:
+            assert len(field_values[k]) == len(field_values["token_ids"]), \
+                f"len(field_values[{k}]) != len(field_values['token_ids'])"
+        return field_values
 
-        if not is_infer:
-            # process tgt
-            # tokenize tgt
-            tgt = tokenization.convert_to_unicode(example.tgt).strip()
-            if self.data_format == "tokenized":
-                tgt_tokens = tgt.split(" ")
-            else:
-                tgt_tokens = self.tokenizer.tokenize(tgt)
+    def _parse_tgt(self, tgt):
+        """Parse target sequence."""
+        # process tgt
+        tgt = tgt.strip()
+        if self.data_format == "tokenized":
+            tgt_tokens = tgt.split(" ")
+        else:
+            tgt_tokens = self.tokenizer.tokenize(tgt)
 
-            tgt_token_ids = self.tokenizer.convert_tokens_to_ids(tgt_tokens)
-            tgt_token_ids.append(self.eos_id)
+        tgt_token_ids = self.tokenizer.convert_tokens_to_ids(tgt_tokens)
+        tgt_token_ids.append(self.eos_id)
 
-            # trim tgt
-            if len(tgt_token_ids) > self.max_tgt_len - 1:
-                tgt_token_ids = tgt_token_ids[:self.max_tgt_len - 1]
+        # trim tgt
+        tgt_token_ids = tgt_token_ids[:self.max_tgt_len - 1]
 
-            tgt_token_ids = [self.bos_id] + tgt_token_ids
-            tgt_type_ids = [1] * len(tgt_token_ids)
-            tgt_pos_ids = list(range(1, len(tgt_token_ids) + 1))
-            assert len(tgt_token_ids) == len(tgt_type_ids) == len(tgt_pos_ids), \
-                "not len(tgt_token_ids) == len(tgt_type_ids) == len(tgt_pos_ids)"
-
-            token_ids += tgt_token_ids
-            type_ids += tgt_type_ids
-            pos_ids += tgt_pos_ids
-
-        assert len(token_ids) == len(type_ids) == len(pos_ids), \
-            "not len(token_ids) == len(type_ids) == len(pos_ids)"
-
-        if self.continuous_position:
-            src_pos_ids = list(range(len(src_token_ids)))
-            if not is_infer:
-                tgt_pos_ids = list(range(len(tgt_token_ids)))
-            pos_ids = list(range(len(token_ids)))
+        tgt_token_ids = [self.bos_id] + tgt_token_ids
 
         field_values = {
-            "token_ids": src_token_ids,
-            "type_ids": src_type_ids,
-            "pos_ids": src_pos_ids
+            "token_ids": tgt_token_ids,
+            "type_ids": [1] * len(tgt_token_ids),
+            "pos_ids": list(range(len(tgt_token_ids)))
         }
+
+        return field_values
+
+    def _convert_example_to_record(self, example, is_infer):
+        """Convert example to record which can be used as the model's input."""
+        field_values = self._parse_src(example.src)
+
+        tgt_start_idx = len(field_values["token_ids"])
+
+        if self.position_style == "relative":
+            ctx_len = len(field_values["token_ids"])
+            field_values["pos_ids"] = [
+                self.max_tgt_len + ctx_len - i - 1
+                for i in range(ctx_len)
+            ]
+
+        if not is_infer:
+            tgt_field_values = self._parse_tgt(example.tgt)
+            field_values = {
+                k: field_values[k] + tgt_field_values[k]
+                for k in field_values
+            }
+
+        if self.position_style == "continuous":
+            field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
+
         field_values["tgt_start_idx"] = tgt_start_idx
         field_values["data_id"] = example.data_id
 
@@ -193,22 +230,22 @@ class DialogReader(object):
 
     def _read_tsv(self, fp, phase, is_infer, delimiter="\t", quotechar=None):
         """Reads a tab separated value file."""
-        csv.field_size_limit(2 ** 20)
-        reader = csv.reader(fp, delimiter=delimiter, quotechar=quotechar)
-        headers = next(reader)
+        headers = next(fp).rstrip("\n").split(delimiter)
         headers.append("data_id")
         Example = namedtuple("Example", headers)
 
-        for i, line in enumerate(reader):
+        for i, line in enumerate(fp):
+            line = line.rstrip("\n").split(delimiter)
             example = Example(*line, data_id=i)
-            if is_infer or phase.endswith("test"):
-                self.features[phase][i] = example
+            if self.reserve_example and (is_infer or phase.endswith("test")):
+                self.features[i] = example
             record = self._convert_example_to_record(example, is_infer)
             yield record
 
     def _read_numerical_file(self, fp, delimiter=";"):
+        """Read a file which contains numerical data."""
         for i, line in enumerate(fp):
-            cols = tokenization.convert_to_unicode(line).strip().split(delimiter)
+            cols = line.strip().split(delimiter)
             cols = list(map(lambda x: list(map(int, x.split(" "))), cols))
             if len(cols) > self.num_numerical_fields:
                 cols = cols[:self.num_numerical_fields]
@@ -217,6 +254,7 @@ class DialogReader(object):
             yield record
 
     def _read_file(self, input_file, phase, is_infer):
+        """Read a file and generate records."""
         def __wrapper__():
             with open_file(input_file) as fp:
                 if self.data_format == "numerical":
@@ -229,6 +267,7 @@ class DialogReader(object):
         return __wrapper__
 
     def _read_files(self, filelist, phase, is_infer, shuffle_files):
+        """Read multiply files and generate records."""
         input_files = open(filelist).readlines()
         def __wrapper__():
             if shuffle_files:
@@ -246,17 +285,35 @@ class DialogReader(object):
 
         return __wrapper__
 
-    def _batch_reader(self, reader, phase=None, is_infer=False, sort_pool_size=2 ** 16):
-        """Construct a batch reader."""
-        def update_max_lens(max_lens, record):
-            """Update max_lens."""
-            if max_lens is None:
-                return self.sort_key(record)
-            else:
-                return [max(max_len, l) for max_len, l in zip(max_lens, self.sort_key(record))]
+    def _shuffle_reader(self, reader, shuffle_pool_size):
+        """Shuffle examples."""
+        def get_batch(pool):
+            self.global_rng.shuffle(pool)
+            for record in pool:
+                yield record
 
-        def get_batch(reader):
-            """Generate batches from reader."""
+        def __wrapper__():
+            pool = []
+            for record in reader():
+                pool.append(record)
+                if len(pool) == shuffle_pool_size:
+                    yield from get_batch(pool)
+                    pool = []
+            if len(pool) > 0:
+                yield from get_batch(pool)
+
+        return __wrapper__
+
+    def _update_max_lens(self, max_lens, record):
+        """Update max_lens."""
+        if max_lens is None:
+            return self.sort_key(record)
+        else:
+            return [max(max_len, l) for max_len, l in zip(max_lens, self.sort_key(record))]
+
+    def _get_batch(self, reader):
+        """Generate batches from reader."""
+        def __wrapper__():
             batch, max_lens = [], None
             for record in reader():
                 if record is None:
@@ -265,7 +322,7 @@ class DialogReader(object):
                     continue
 
                 self.current_example += 1
-                max_lens = update_max_lens(max_lens, record)
+                max_lens = self._update_max_lens(max_lens, record)
                 if self.in_tokens:
                     to_append = (len(batch) + 1) * sum(max_lens) <= self.batch_size
                 else:
@@ -278,15 +335,18 @@ class DialogReader(object):
 
             if len(batch) > 0:
                 yield batch
+        return __wrapper__
 
-        def get_sorted_batch(pool):
+    def _get_sorted_batch(self, reader):
+        """Generate sorted batch from reader."""
+        def _get_sorted_batch_from_pool(pool):
             """Generate sorted batches from pool."""
             pool = sorted(pool, key=self.sort_key)
             batches = []
             batch, max_lens = [], None
             for record in pool:
                 self.current_example += 1
-                max_lens = update_max_lens(max_lens, record)
+                max_lens = self._update_max_lens(max_lens, record)
                 if self.in_tokens:
                     to_append = (len(batch) + 1) * sum(max_lens) <= self.batch_size
                 else:
@@ -305,24 +365,26 @@ class DialogReader(object):
                 yield batch
 
         def __wrapper__():
-            if sort_pool_size > 0:
-                pool = []
-                for record in reader():
-                    pool.append(record)
-                    if len(pool) == sort_pool_size:
-                        for batch in get_sorted_batch(pool):
-                            yield batch
-                        pool = []
-                if len(pool) > 0:
-                    for batch in get_sorted_batch(pool):
-                        yield batch
-            else:
-                for batch in get_batch(reader):
-                    yield batch
+            pool = []
+            for record in reader():
+                pool.append(record)
+                if len(pool) == self.sort_pool_size:
+                    yield from _get_sorted_batch_from_pool(pool)
+                    pool = []
+            if len(pool) > 0:
+                yield from _get_sorted_batch_from_pool(pool)
 
         return __wrapper__
 
+    def _batch_reader(self, reader, phase=None, is_infer=False):
+        """Construct a batch reader from a record reader."""
+        if self.sort_pool_size > 0 and not is_infer:
+            return self._get_sorted_batch(reader)
+        else:
+            return self._get_batch(reader)
+
     def _distributed_batch_reader(self, batch_reader, num_part, part_id, is_test=False):
+        """Distributed batch reader."""
         def __wrapper__():
             batches = []
             for batch in batch_reader():
@@ -346,9 +408,6 @@ class DialogReader(object):
                        is_infer=False):
         """Data generator."""
         def __wrapper__():
-            if is_infer or phase.endswith("test"):
-                self.features[phase] = {}
-
             nonlocal reader
             if reader is None:
                 if self.file_format == "filelist":
@@ -360,11 +419,10 @@ class DialogReader(object):
                         self.current_file = input_file
                     reader = self._read_file(input_file, phase, is_infer)
 
-            batch_reader = self._batch_reader(
-                reader,
-                phase,
-                is_infer,
-                sort_pool_size=self.sort_pool_size if not is_infer else 0)
+            if self.shuffle_pool_size > 0:
+                reader = self._shuffle_reader(reader, self.shuffle_pool_size)
+
+            batch_reader = self._batch_reader(reader, phase, is_infer)
             if phase == "train":
                 batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id)
             elif phase.startswith("distributed"):
@@ -375,11 +433,12 @@ class DialogReader(object):
                     self.current_example = 0
                     self.current_epoch = epoch_index + 1
                 for batch in batch_reader():
-                    yield self._pad_batch_records(batch, is_infer)
+                    yield self._pad_batch_records(batch, is_infer, phase=phase)
 
         return __wrapper__
 
     def _gen_self_attn_mask(self, batch_token_ids, batch_tgt_start_idx=None, is_unidirectional=True, shift_len=0):
+        """Generate self attention masking matrix."""
         max_len = max(map(len, batch_token_ids))
         input_mask_data = np.zeros((len(batch_token_ids), max_len + shift_len, max_len + shift_len))
         if is_unidirectional:
@@ -395,10 +454,8 @@ class DialogReader(object):
                 input_mask_data[index, :len(token_ids) + shift_len, :len(token_ids) + shift_len] = 1.0
         return input_mask_data.astype("float32")
 
-    def _pad_batch_records(self, batch_records, is_infer):
-        """
-        Padding batch records and construct model's inputs.
-        """
+    def _pad_batch_records(self, batch_records, is_infer, phase=None):
+        """Padding a batch of records and construct model's inputs."""
         batch_size = len(batch_records)
         batch = {}
         batch_token_ids = [record.token_ids for record in batch_records]
@@ -423,17 +480,19 @@ class DialogReader(object):
             batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
             batch["tgt_ids"] = tgt_ids.tolist()
             batch["tgt_pos"] = tgt_pos.tolist()
+            batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
 
             batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
+
+            batch_data_id = [record.data_id for record in batch_records]
+            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
         else:
-            batch["tgt_label"], batch["tgt_pos"] = mask(
+            batch["tgt_label"], batch["tgt_idx"] = mask(
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
                 sent_b_starts=batch_tgt_start_idx,
                 is_unidirectional=True)
 
-        batch_data_id = [record.data_id for record in batch_records]
-        batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
         return batch
 
 

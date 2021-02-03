@@ -15,14 +15,12 @@
 
 import collections
 import json
-import sentencepiece as spm
 import six
 import unicodedata
 
+import sentencepiece as spm
+
 from knover.utils import str2bool
-
-
-SPIECE_UNDERLINE = u"▁".encode("utf-8")
 
 
 def clean_text(text):
@@ -60,7 +58,6 @@ def preprocess_text(inputs, remove_space=True, lower=False):
 
 def encode_pieces(spm_model, text, return_unicode=True, sample=False):
     """turn sentences into word pieces."""
-    # liujiaxiang: add for ernie-albert, mainly consider for “/”/‘/’/— causing too many unk
     text = clean_text(text)
 
     if not sample:
@@ -71,39 +68,12 @@ def encode_pieces(spm_model, text, return_unicode=True, sample=False):
     return pieces
 
 
-def encode_ids(spm_model, text, sample=False):
-    """turn sentences into word pieces."""
-    pieces = encode_pieces(spm_model, text, return_unicode=False, sample=sample)
-    ids = [spm_model.PieceToId(piece) for piece in pieces]
-    return ids
-
-
-def convert_to_unicode(text):
-    """Converts `text` to Unicode (if it's not already), assuming utf-8 input."""
-    if six.PY3:
-        if isinstance(text, str):
-            return text
-        elif isinstance(text, bytes):
-            return text.decode("utf-8", "ignore")
-        else:
-            raise ValueError("Unsupported string type: %s" % (type(text)))
-    elif six.PY2:
-        if isinstance(text, str):
-            return text.decode("utf-8", "ignore")
-        elif isinstance(text, unicode):
-            return text
-        else:
-            raise ValueError("Unsupported string type: %s" % (type(text)))
-    else:
-        raise ValueError("Not running on Python2 or Python 3?")
-
-
 def load_vocab(vocab_file):
     """Loads a vocabulary file into a dictionary."""
     vocab = collections.OrderedDict()
     fin = open(vocab_file)
     for num, line in enumerate(fin):
-        items = convert_to_unicode(line.rstrip()).split("\t")
+        items = line.rstrip().split("\t")
         if len(items) > 2:
             break
         token = items[0]
@@ -140,9 +110,13 @@ class SentencePieceTokenizer(object):
         self.do_lower_case = args.do_lower_case
         self.inv_vocab = {v: k for k, v in self.vocab.items()}
 
+    def preprocess(self, text):
+        text = preprocess_text(text, lower=self.do_lower_case)
+        return text
+
     def tokenize(self, text):
         """Tokenizes a piece of text."""
-        text = preprocess_text(text, lower=self.do_lower_case)
+        text = self.preprocess(text)
         return encode_pieces(self.spm_model, text, return_unicode=True)
 
     def convert_tokens_to_ids(self, tokens):

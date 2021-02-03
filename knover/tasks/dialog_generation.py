@@ -26,21 +26,25 @@ from knover.utils.inference_utils import create_predictor
 
 @register_task("DialogGeneration")
 class DialogGeneration(Task):
-    """
-    Define dialogue response generation.
-    """
+    """Define dialogue response generation."""
 
     @classmethod
     def add_cmdline_args(cls, parser):
         """Add cmdline argurments."""
         group = parser.add_argument_group("Task")
-        group.add_argument("--do_generation", type=str2bool, default=True)
-        group.add_argument("--is_cn", type=str2bool, default=False)
+        group.add_argument("--do_generation", type=str2bool, default=True,
+                           help="Whether to run generation on inference phase. "
+                           "Dialogue generation support two type of inference: generation and scoring.")
+        group.add_argument("--is_cn", type=str2bool, default=False,
+                           help="Whether to run in Chinese data.")
 
-        group.add_argument("--nsp_inference_model_path", type=str, default=None)
-        group.add_argument("--nsp_attention_style", type=str, default="bidirectional")
+        group.add_argument("--nsp_inference_model_path", type=str, default=None,
+                           help="The path of NSP inference model which will be given the NSP ranking scores.")
+        group.add_argument("--nsp_attention_style", type=str, default="bidirectional",
+                           help="The style of NSP model.")
 
-        group.add_argument("--ranking_score", type=str, default="decode_score")
+        group.add_argument("--ranking_score", type=str, default="decode_score",
+                           help="Which score will be used to rerank.")
 
         args, _ = parser.parse_known_args()
         if args.model == "Plato":
@@ -53,6 +57,9 @@ class DialogGeneration(Task):
         super(DialogGeneration, self).__init__(args)
         self.do_generation = args.do_generation
         self.is_cn = args.is_cn
+
+        # reserve example for inference
+        args.reserve_example = True
         if args.model == "Plato":
             self.reader = PlatoReader(args)
         else:
@@ -66,62 +73,97 @@ class DialogGeneration(Task):
 
         self.ranking_score = args.ranking_score
         self.max_dec_len = args.max_dec_len
+
         return
 
     def _post_process_generation_output(self, predictions):
-        """
-        Post process generation output.
+        """Post-process generation output.
 
         Calculate repetion, reranking.
+
+        Args:
+            predictions: the generation outputs of the model.
+
+        Returns:
+            Return the top-1 prediction of each data.
         """
-        for info in predictions:
-            tokens = post_process_context(info["context_token_ids"], self.reader)
-            pred_token_ids, pred_tokens = post_process_response(info["response_token_ids"], self.reader)
-            info["context"] = " [SEP] ".join(" ".join(u) for u in tokens)
-            info["response"] = " ".join(pred_tokens)
-            info["num_token"] = len(pred_token_ids)
-            info["cross_turn_repetition"] = get_cross_turn_repetition(
-                tokens, pred_tokens, self.reader.eos_id, self.is_cn)
-            info["in_turn_repetition"] = max(
-                get_in_turn_repetition(pred_tokens, self.is_cn),
-                get_in_turn_repetition(pred_token_ids))
         if self.nsp_predictor is not None:
             get_nsp_score_batch(self.nsp_predictor, predictions)
 
         group = defaultdict(list)
-        for info in predictions:
-            group[info["data_id"]].append(info)
+        for pred in predictions:
+            group[pred["data_id"]].append(pred)
 
         predictions = []
         for data_id in group:
-            infos = group[data_id]
-            for info in infos:
-                info["score"] = info[self.ranking_score]
-                if self.max_dec_len is not None and info["num_token"] >= self.max_dec_len: # not ending
-                    info["score"] -= 1e3
-                elif info["cross_turn_repetition"] > 0:
-                    info["score"] -= 1e3
-                elif info["in_turn_repetition"] > 0:
-                    info["score"] -= 1e3
-            infos = sorted(infos, key=lambda info: -info["score"])
-            pred = infos[0]
+            example = self.reader.features[data_id]
+            preds = group[data_id]
+            for pred in preds:
+                # TODO: fix tokenized input
+                words = [self.reader.tokenizer.preprocess(s).split(" ") for s in example.src.split("[SEP]")]
+                pred_token_ids, pred_words = post_process_response(pred["response_token_ids"], self.reader)
+                num_token = len(pred_token_ids)
+
+                cross_turn_repetition = check_cross_turn_repetition(
+                    words, pred_words, self.reader.eos_id, self.is_cn)
+                in_turn_repetition = check_in_turn_repetition(pred_words, self.is_cn) \
+                    or check_in_turn_repetition(pred_token_ids)
+
+                pred["response"] = " ".join(pred_words)
+                pred["score"] = pred[self.ranking_score]
+                if self.max_dec_len is not None and num_token >= self.max_dec_len: # not ending
+                    pred["score"] -= 1e3
+                elif cross_turn_repetition:
+                    pred["score"] -= 1e3
+                elif in_turn_repetition:
+                    pred["score"] -= 1e3
+
+            preds = sorted(preds, key=lambda pred: -pred["score"])
+            if self.debug_mode:
+                print("Example:", example.data_id)
+                print("Context:")
+                for s in example.src.split(" [SEP] "):
+                    print("\t" + s)
+                if "knowledge" in example._fields:
+                    print("Knowledge:")
+                    print("\t" + example.knowledge)
+                print("Predictions:")
+                for pred in preds:
+                    print(f"\t{pred['response']}\t{pred['score']:.5f}")
+            pred = preds[0]
             keep_attr = ["data_id", "score", "response"]
             pred = {k: pred[k] for k in keep_attr}
             predictions.append(pred)
         return predictions
 
     def _post_process_scoring_output(self, predictions):
+        """Post-process scoring output.
+
+        The score is calculated by perplexity(PPL).
+        """
         raise NotImplementedError
 
     def _post_process_infer_output(self, predictions):
+        """Post-process inference output.
+
+        Dialogue generation support two type of inference.
+        1. Generating a response for the given context.
+        2. Calculate the response generation score for the give context.
+        """
         if self.do_generation:
             return self._post_process_generation_output(predictions)
         else:
             return self._post_process_scoring_output(predictions)
 
-    def merge_mertrics_and_statistics(self, outputs, part_outputs):
-        """
-        Merge two evaulation output.
+    def merge_metrics_and_statistics(self, outputs, part_outputs):
+        """Merge two evaulation output.
+
+        Args:
+            outputs: Original outputs which contains metrics and statistics.
+            part_outputs: New outputs which contains metrics and statistics.
+
+        Returns:
+            Return merged output which contains metrics and statistics.
         """
         if outputs is None:
             return part_outputs
@@ -150,15 +192,13 @@ class DialogGeneration(Task):
         return new_outputs
 
     def get_metrics(self, outputs):
-        """
-        Get metrics.
-        """
+        """Get metrics."""
         if outputs is None:
             raise ValueError("metrics is None")
         outputs = dict(outputs)
-        outputs.pop("batch_size", None)
-        outputs.pop("tokens_num", None)
         metrics = {}
+        batch_size = outputs.pop("batch_size", None)
+        tokens_num = outputs.pop("tokens_num", None)
         for k in outputs:
             if k.startswith("token_"):
                 metrics[k[6:]] = outputs[k]
@@ -170,7 +210,17 @@ class DialogGeneration(Task):
 
 
 def post_process_context(token_ids, reader, merge=True):
-    """Post-process the context sequence."""
+    """Post-process the context id sequence.
+
+    Truncate the <bos> token.
+    Convert token ids to words(merge=True) or tokens(merge=False).
+
+    Args:
+        token_ids: Token id sequence.
+
+    Returns:
+        context: A list of utterances. Each utterance is either a word list or a token list.
+    """
     context = []
     utt = []
     for tok_id in token_ids[1:]:
@@ -186,9 +236,18 @@ def post_process_context(token_ids, reader, merge=True):
 
 
 def post_process_response(token_ids, reader, merge=True):
-    """
-    Post-process the decoded sequence. Truncate from the first
-    <eos> and remove the <bos> and <eos> tokens currently.
+    """Post-process the decoded sequence.
+
+    Truncate from the first <eos> and remove the <bos> and <eos> tokens.
+    Convert token_ids to words(merge=True) or tokens(merge=False)
+
+    Args:
+        token_ids: Token id sequence.
+        merge: If ture, merge subword(token) and return words, otherwise return tokens.
+
+    Returns:
+        token_ids: Truncated token_ids.
+        response: A word list or a token list.
     """
     eos_pos = len(token_ids)
     for i, tok_id in enumerate(token_ids):
@@ -202,46 +261,73 @@ def post_process_response(token_ids, reader, merge=True):
     return token_ids, response
 
 
-def get_cross_turn_repetition(context, pred_tokens, eos_idx, is_cn=False):
-    """Get cross-turn repetition."""
-    if len(pred_tokens) == 0:
-        return 1.0
-    if is_cn:
-        context = ["".join(utt) for utt in context]
-        pred_tokens = "".join(pred_tokens)
+def check_cross_turn_repetition(context, pred, eos_idx, is_cn=False):
+    """Check the cross-turn repetition.
+
+    Calcuate tri-gram repetition.
+
+    Args:
+        context: Words or tokens or token_ids.
+        pred: Words or tokens or token_ids.
+        is_cn: Chinese version repetition detection. If true, calcuate repetition on characters.
+
+    Returns:
+        Whether the cross-turn repetition happens.
+    """
+    if isinstance(pred[0], str):
+        context = [[tok.lower() for tok in utt] for utt in context]
+        pred = [tok.lower() for tok in pred]
+        if is_cn:
+            context = ["".join(utt) for utt in context]
+            pred = "".join(pred)
 
     pred_tri_grams = set()
-    for i in range(len(pred_tokens) - 2):
-        tri_gram = tuple(pred_tokens[i:i + 3])
+    for i in range(len(pred) - 2):
+        tri_gram = tuple(pred[i:i + 3])
         pred_tri_grams.add(tri_gram)
     for utt in context:
         for i in range(len(utt) - 2):
             tri_gram = tuple(utt[i:i + 3])
             if tri_gram in pred_tri_grams:
-                return 1.0
-    return 0.0
+                return True
+    return False
 
 
-def get_in_turn_repetition(pred, is_cn=False):
-    """Get in-turn repetition."""
-    if len(pred) == 0:
-        return 1.0
+def check_in_turn_repetition(pred, is_cn=False):
+    """Check the in-turn repetition.
+
+    Calcuate tri-gram repetition.
+
+    Args:
+        pred: Words or tokens or token_ids.
+        is_cn: Chinese version repetition detection. If true, calcuate repetition on characters.
+
+    Returns:
+        Whether the in-turn repetion happens.
+    """
     if isinstance(pred[0], str):
         pred = [tok.lower() for tok in pred]
         if is_cn:
             pred = "".join(pred)
+
     tri_grams = set()
     for i in range(len(pred) - 2):
         tri_gram = tuple(pred[i:i + 3])
         if tri_gram in tri_grams:
-            return 1.0
+            return True
         tri_grams.add(tri_gram)
-    return 0.0
+    return False
 
 
 def get_nsp_score_batch(nsp_predictor, predictions):
-    """
-    Get NSP scores of a batch.
+    """Get the NSP scores of a batch.
+
+    Args:
+        nsp_predictor: The NSP model predictor.
+        predictions: A batch of prediction, contains `context_token_ids` and `response_token_ids`.
+
+    Returns:
+        Add `nsp_score` to each prediction.
     """
     import argparse
     from collections import namedtuple
@@ -264,6 +350,7 @@ def get_nsp_score_batch(nsp_predictor, predictions):
         if args.latent_type_size:
             args.batch_size *= args.latent_type_size
     args.tokenized_input = True
+    args.use_mlm = False
     reader = NSPReader(args)
 
     def __reader__():
@@ -271,12 +358,16 @@ def get_nsp_score_batch(nsp_predictor, predictions):
 
         Example = namedtuple("Example", headers)
 
-        for i, info in enumerate(predictions):
-            context = post_process_context(info["context_token_ids"], reader, merge=False)
-            context_tokenized_input = " [SEP] ".join(" ".join(utt) for utt in context)
-            _, response = post_process_response(info["response_token_ids"], reader, merge=False)
+        for i, pred in enumerate(predictions):
+            context = post_process_context(pred["context_token_ids"], reader, merge=False)
+            ctx_tokenized_input = " [SEP] ".join(" ".join(utt) for utt in context)
+            _, response = post_process_response(pred["response_token_ids"], reader, merge=False)
             response_tokenized_input = " ".join(response)
-            example = Example(src=context_tokenized_input, tgt=response_tokenized_input, data_id=i)
+            example = Example(
+                src=ctx_tokenized_input,
+                tgt=response_tokenized_input,
+                data_id=i
+            )
             record = reader._convert_example_to_record(example, is_infer=True)
             yield record
         return
@@ -292,7 +383,7 @@ def get_nsp_score_batch(nsp_predictor, predictions):
         outputs = nsp_predictor(data)
         for probs, data_id in zip(outputs[0], outputs[-1]):
             data_id = data_id[0]
-            info = predictions[data_id]
-            info["nsp_score"] = float(probs[1])
+            pred = predictions[data_id]
+            pred["nsp_score"] = float(probs[1])
 
     return

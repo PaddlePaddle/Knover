@@ -32,9 +32,10 @@ class UnifiedTransformer(Model):
     def add_cmdline_args(cls, parser):
         """Add cmdline argurments."""
         group = Model.add_cmdline_args(parser)
-        group.add_argument("--max_seq_len", type=int, default=256)
-        group.add_argument("--weight_sharing", type=str2bool, default=True)
-        group.add_argument("--mem_efficient", type=str2bool, default=False)
+        group.add_argument("--weight_sharing", type=str2bool, default=True,
+                           help="Whether to share the token embedding with the output FC.")
+        group.add_argument("--mem_efficient", type=str2bool, default=False,
+                           help="Whether to run in memory efficient mode.")
 
         Generator.add_cmdline_args(parser)
         return group
@@ -59,7 +60,7 @@ class UnifiedTransformer(Model):
         self.pos_emb_name = "pos_embedding"
 
         self.epsilon = args.epsilon or 1e-5
-        self.n_layer_per_block = args.n_layer_per_block or 1
+        self.n_layer_per_block = args.get("n_layer_per_block", 1)
         self.pre_encoder_cmd = args.get("pre_encoder_cmd", "nd")
         self.preprocess_cmd = args.get("preprocess_cmd", "")
         self.postprocess_cmd = args.get("postprocess_cmd", "dan")
@@ -97,6 +98,19 @@ class UnifiedTransformer(Model):
                    pos_ids,
                    input_mask,
                    aux_emb=None):
+        """Generate input embeddings of Transformer
+
+        Args:
+            tokens_ids: represents the token id of each token, shape is [batch_size, max_seq_len, 1]
+            type_ids: represents the type of each token, shape is [batch_size, max_seq_len, 1]
+            pos_ids: represents the position of each token, shape is [batch_size, max_seq_len, 1]
+            input_mask: represents the attention masking mastrix in each Transformer blocks,
+                shape is [batch_size, max_seq_len, max_seq_len]
+            aux_emb: represents the auxiliary input embeddings of Transformer.
+
+        Returns:
+            A Tuple contains the input embeddings and the attention masking matrix of Transformer.
+        """
         token_emb_out = layers.embedding(
             input=token_ids,
             size=[self.vocab_size, self.emb_size],
@@ -117,17 +131,18 @@ class UnifiedTransformer(Model):
                 name=self.pos_emb_name, initializer=self.param_initializer))
         emb_out = token_emb_out + type_emb_out + pos_emb_out
 
-        # auxiliary memory embeddings
+        # concat auxiliary memory embeddings
         if aux_emb is not None:
             emb_out = layers.concat([aux_emb, emb_out], axis=1)
 
-        # post process of embedding
+        # pre process of input embedding
         emb_out = pre_process_layer(
             emb_out,
             self.pre_encoder_cmd,
             self.prepostprocess_dropout,
             name="pre_encoder",
             epsilon=self.epsilon)
+
         if self.emb_mapping_in:
             emb_out = layers.fc(
                 input=emb_out,
@@ -139,28 +154,54 @@ class UnifiedTransformer(Model):
                 bias_attr="emb_hidden_mapping_bias")
 
         # generate n-head self-attention mask
-        self_attn_mask = input_mask
-        self_attn_mask = layers.scale(
-            x=self_attn_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
+        self_attn_mask = layers.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
         n_head_self_attn_mask = layers.unsqueeze(self_attn_mask, [1])
         n_head_self_attn_mask.stop_gradient = True
 
         return emb_out, n_head_self_attn_mask
 
-    def _get_pooled_output(self, enc_out, pos):
-        enc_out = layers.reshape(
-            x=enc_out, shape=[-1, self.hidden_size])
-        pos = layers.cast(x=pos, dtype="int32")
-        feat = layers.gather(input=enc_out, index=pos)
+    def _get_pooled_output(self, enc_out, idx=None, name="pooled"):
+        """Get pooled output of the last output embedding in Transformer.
+
+        Args:
+            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
+            idx(optional): the selected indices in pooling operator, shape is [batch_size].
+            name: a string, the name of the pooling layer.
+
+        Returns:
+            pooled_out: the pooled output embedding, shape is [batch_size, hidden_dim].
+        """
+        if idx is None:
+            feat = layers.slice(input=enc_out, axes=[1], starts=[0], ends=[1])
+        else:
+            enc_out = layers.reshape(x=enc_out, shape=[-1, self.hidden_size])
+            feat = layers.gather(input=enc_out, index=idx)
 
         pooled_out = layers.fc(
             input=feat,
             size=self.hidden_size,
             act="tanh",
-            param_attr=fluid.ParamAttr(
-                name="pooled_fc.w_0", initializer=self.param_initializer),
-            bias_attr="pooled_fc.b_0")
+            param_attr=fluid.ParamAttr(name=f"{name}_fc.w_0", initializer=self.param_initializer),
+            bias_attr=f"{name}_fc.b_0")
         return pooled_out
+
+    def _get_classifier_output(self, pooled_out, num_classes=2, name="cls"):
+        """Get the output logits of the classifier network.
+
+        Args:
+            pooled_out: represents the input embedding of classifier network, shape is [batch_size, hidden_dim]
+            num_classes: an int, the number of classes in classification task.
+            name: a string, the name of classifier network.
+
+        Returns:
+            cls_logits: the classification logits, shape is [batch_size, num_classes]
+        """
+        cls_logits = layers.fc(
+            input=pooled_out,
+            size=num_classes,
+            param_attr=fluid.ParamAttr(name=f"{name}_fc.w_0", initializer=self.param_initializer),
+            bias_attr=f"{name}_fc.b_0")
+        return cls_logits
 
     def _generation_network(self,
                             token_ids,
@@ -169,15 +210,39 @@ class UnifiedTransformer(Model):
                             generation_mask,
                             aux_emb=None,
                             gather_idx=None):
+        """Run Transformer generation network.
+
+        Args:
+            tokens_ids: represents the token id of each token, shape is [batch_size, max_seq_len, 1]
+            type_ids: represents the type of each token, shape is [batch_size, max_seq_len, 1]
+            pos_ids: represents the position of each token, shape is [batch_size, max_seq_len, 1]
+            input_mask: represents the attention masking mastrix in each Transformer blocks,
+                shape is [batch_size, max_seq_len, max_seq_len]
+            aux_emb: represents the auxiliary input embeddings of Transformer.
+            gather_idx: the gather index of saved embedding in Transformer.
+
+        Returns:
+            A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
+        """
         emb_out, n_head_self_attn_mask = self._gen_input(
             token_ids, type_ids, pos_ids, generation_mask, aux_emb=aux_emb)
         return self._encode(
             emb_out, n_head_self_attn_mask, self.generation_caches,
             gather_idx=gather_idx)
 
-    def _encode(self, emb_out, n_head_self_attn_mask, caches=None, gather_idx=None):
+    def _encode(self, emb_intput, n_head_self_attn_mask, caches=None, gather_idx=None):
+        """Run Transformer encode pass.
+
+        Args:
+            emb_input: represents the input embeddings fo Transformer, shape is [batch_size, max_seq_len, hidden_dim]
+            n_head_self_attn_mask: represents the attention masking matrix,
+                shape is [batch_size, num_heads, max_seq_len, max_seq_len]
+
+        Returns:
+            A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
+        """
         return encoder(
-            enc_input=emb_out,
+            enc_input=emb_intput,
             attn_bias=n_head_self_attn_mask,
             n_layer=self.n_layer,
             n_head=self.n_head,
@@ -200,24 +265,68 @@ class UnifiedTransformer(Model):
             store=caches is not None
         )
 
-    def _gumbel_softmax(self, logits, tau=0.67, eps=1e-10):
-        u = layers.uniform_random_batch_size_like(
-            logits, shape=[-1, self.latent_type_size], min=0.0, max=1.0)
-        u.stop_gradient = True
-        gumbel = 0.0 - layers.log(eps - layers.log(u + eps))
-        y = logits + gumbel
-        return layers.softmax(y / tau)
+    def _calc_logits(self, enc_out, tgt_idx=None):
+        """Get the logits of generation task.
 
-    def _get_feed_dict(self, is_infer=False):
-        """
-        Get the feed list of the model.
+        The network may share weight with token embeddings.
 
         Args:
-            is_infer(bool): True if running inference.
+            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
+            tgt_idx: the indices of prediction tokens, shape is [num_predictions].
 
         Returns:
-            list(Variable): The feed list.
-            list(str): The name of each Variable in feed list.
+            logits: the logits of prediction task, shape is [num_predictions, vocab_size].
+        """
+        enc_out = layers.reshape(
+            x=enc_out, shape=[-1, self.hidden_size])
+        if tgt_idx is not None:
+            seq_feat = layers.gather(input=enc_out, index=tgt_idx)
+        else:
+            seq_feat = enc_out
+
+        seq_trans_feat = layers.fc(
+            input=seq_feat,
+            size=self.emb_size,
+            act=self.hidden_act,
+            param_attr=fluid.ParamAttr(
+                name="mask_lm_trans_fc.w_0",
+                initializer=self.param_initializer),
+            bias_attr="mask_lm_trans_fc.b_0")
+
+        seq_trans_feat = pre_process_layer(
+            seq_trans_feat, self.post_cls_cmd, name="mask_lm_trans")
+
+        if self.weight_sharing:
+            logits = layers.matmul(
+                x=seq_trans_feat,
+                y=fluid.default_main_program().global_block().var(
+                    self.token_emb_name),
+                transpose_y=True)
+            if self.cls_bias:
+                logits += layers.create_parameter(
+                    shape=[self.vocab_size],
+                    dtype=self.dtype,
+                    attr=fluid.ParamAttr(name="mask_lm_out_fc.b_0"),
+                    is_bias=True)
+        else:
+            seq_out_bias_attr = "mask_lm_out_fc.b_0" if self.cls_bias else False
+            logits = layers.fc(
+                input=seq_trans_feat,
+                size=self.vocab_size,
+                param_attr=fluid.ParamAttr(
+                    name="mask_lm_out_fc.w_0",
+                    initializer=self.param_initializer),
+                bias_attr=seq_out_bias_attr)
+        return logits
+
+    def _get_feed_dict(self, is_infer=False):
+        """Get model's input feed dict.
+
+        Args:
+            is_infer: If true, get inference input feed dict, otherwise get training / evaluation input feed dict.
+
+        Returns:
+            feed_dict: A feed dict mapping keys to feed input variable.
         """
         feed_dict = {}
         feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
@@ -231,38 +340,24 @@ class UnifiedTransformer(Model):
 
         if is_infer:
             feed_dict["tgt_ids"] = layers.data(
-                name="tgt_ids",
-                shape=[-1, self.max_seq_len, 1],
-                dtype="int64",
-                lod_level=2)
+                name="tgt_ids", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
             feed_dict["tgt_pos"] = layers.data(
-                name="tgt_pos",
-                shape=[-1, self.max_seq_len, 1],
-                dtype="int64",
-                lod_level=2)
-            feed_dict["init_score"] = layers.data(
-                name="init_score",
-                shape=[-1, 1],
-                dtype="float32",
-                lod_level=1)
-            feed_dict["parent_idx"] = layers.data(
-                name="parent_idx",
-                shape=[-1],
-                dtype="int64")
+                name="tgt_pos", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
+            feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
+            feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
 
             feed_dict["tgt_generation_mask"] = layers.data(
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
+
+            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_pos"] = layers.data(name="tgt_pos", shape=[-1, 1], dtype="int64")
+            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 1], dtype="int64")
 
-        feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         return feed_dict
 
     def forward(self, inputs, is_infer=False):
-        """
-        Run model main forward.
-        """
+        """Run model main forward."""
         outputs = {}
         if is_infer:
             self.generation_caches = [{
@@ -294,100 +389,56 @@ class UnifiedTransformer(Model):
             outputs["checkpoints"] = generation_checkpoints
         return outputs
 
-    def _calc_logits(self, enc_out, seq_pos=None):
-        """Get the logits of generation."""
-        enc_out = layers.reshape(
-            x=enc_out, shape=[-1, self.hidden_size])
-        if seq_pos is not None:
-            seq_pos = layers.cast(x=seq_pos, dtype="int32")
-            seq_feat = layers.gather(input=enc_out, index=seq_pos)
-        else:
-            seq_feat = enc_out
-
-        seq_trans_feat = layers.fc(
-            input=seq_feat,
-            size=self.emb_size,
-            act=self.hidden_act,
-            param_attr=fluid.ParamAttr(
-                name="mask_lm_trans_fc.w_0",
-                initializer=self.param_initializer),
-            bias_attr=fluid.ParamAttr(name="mask_lm_trans_fc.b_0"))
-
-        seq_trans_feat = pre_process_layer(
-            seq_trans_feat, self.post_cls_cmd, name="mask_lm_trans")
-
-        if self.weight_sharing:
-            fc_out = layers.matmul(
-                x=seq_trans_feat,
-                y=fluid.default_main_program().global_block().var(
-                    self.token_emb_name),
-                transpose_y=True)
-            if self.cls_bias:
-                fc_out += layers.create_parameter(
-                    shape=[self.vocab_size],
-                    dtype=self.dtype,
-                    attr=fluid.ParamAttr(name="mask_lm_out_fc.b_0"),
-                    is_bias=True)
-        else:
-            seq_out_bias_attr = fluid.ParamAttr(name="mask_lm_out_fc.b_0") if self.cls_bias else False
-            fc_out = layers.fc(input=seq_trans_feat,
-                               size=self.vocab_size,
-                               param_attr=fluid.ParamAttr(
-                                   name="mask_lm_out_fc.w_0",
-                                   initializer=self.param_initializer),
-                               bias_attr=seq_out_bias_attr)
-        return fc_out
-
-    def _get_metrics(self, inputs, outputs):
+    def get_metrics(self, inputs, outputs):
+        """Get metrics."""
         metrics = {}
 
-        fc_out = self._calc_logits(outputs["enc_out"], inputs["tgt_pos"])
+        tgt_logits = self._calc_logits(outputs["enc_out"], inputs["tgt_idx"])
         tgt_lm_loss = layers.softmax_with_cross_entropy(
-            logits=fc_out, label=inputs["tgt_label"])
+            logits=tgt_logits, label=inputs["tgt_label"])
         mean_tgt_lm_loss = layers.mean(tgt_lm_loss)
-        loss = mean_tgt_lm_loss
         metrics["token_lm_loss"] = mean_tgt_lm_loss
 
+        loss = mean_tgt_lm_loss
         metrics["loss"] = loss
         return metrics
 
-    def _get_statistics(self, inputs, outputs):
+    def get_statistics(self, inputs, outputs):
+        """Get statistics."""
         statistics = {}
         if "tgt_label" in inputs:
-            statistics["tokens_num"] = layers.reduce_sum(
-                layers.fill_constant_batch_size_like(
-                    input=inputs["tgt_label"], value=1.0, shape=[-1], dtype="int64"))
-        statistics["batch_size"] = layers.reduce_sum(
-            layers.fill_constant_batch_size_like(
-                input=inputs["token_ids"], value=1.0, shape=[-1], dtype="int64"))
+            statistics["tokens_num"] = inputs["tgt_label"].shape()[0]
+        statistics["batch_size"] = inputs["token_ids"].shape()[0]
         return statistics
 
-    def get_metrics_and_statistics(self, inputs, outputs):
-        """
-        Get metrics and statistics.
-        """
-        metrics = self._get_metrics(inputs, outputs)
-        statistics = self._get_statistics(inputs, outputs)
-        return metrics, statistics
-
     def infer(self, inputs, outputs):
-        """
-        Run model inference.
+        """Run model inference.
+
+        Only support generation now.
         """
         if self.do_generation:
             return self.generator.inference(self, inputs, outputs)
         else:
             raise NotImplementedError
 
+    def _get_batch_size(self, inputs):
+        """Get the batch size of inputs."""
+        if "data_id" not in inputs:
+            raise ValueError("Cannot find `data_id` in inputs.")
+        elif isinstance(inputs["data_id"], np.ndarray):
+            return len(inputs["data_id"])
+        elif isinstance(inputs["data_id"], fluid.LoDTensor):
+            return inputs["data_id"].shape()[0]
+        else:
+            raise ValueError(f"Invalid type of `data_id`: {type(inputs['data'])}")
+
     def _run_generation(self, inputs):
-        """
-        Run generation.
-        """
-        batch_size = len(inputs["data_id"])
+        """Run generation."""
+        batch_size = self._get_batch_size(inputs)
         inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
         outputs = self._execute(
             self.infer_program,
-            self._get_feed(inputs, is_infer=True),
+            inputs,
             self.infer_fetch_dict,
             return_numpy=False)
 
@@ -403,19 +454,21 @@ class UnifiedTransformer(Model):
             for j in range(start, end):
                 sub_start = seq_ids.lod()[1][j]
                 sub_end = seq_ids.lod()[1][j + 1]
-                info = {}
-                info["data_id"] = data_id
-                info["decode_score"] = float(seq_scores_np[sub_end - 1])
-                info["context_token_ids"] = token_ids
-                info["response_token_ids"] = seq_ids_np[sub_start:sub_end].tolist()
-                predictions.append(info)
+                pred = {}
+                pred["data_id"] = data_id
+                pred["decode_score"] = float(seq_scores_np[sub_end - 1])
+                pred["context_token_ids"] = token_ids
+                pred["response_token_ids"] = seq_ids_np[sub_start:sub_end].tolist()
+                predictions.append(pred)
         return predictions
 
     def infer_step(self, inputs):
-        """
-        Run one inference step.
-        """
+        """Run one inference step."""
+        # handle DataLoader input type in distributed mode.
+        if isinstance(inputs, list):
+            inputs = inputs[0]
         if self.do_generation:
+            batch_size = self._get_batch_size(inputs)
             if self.generator.num_samples:
                 inputs = {
                     name: repeat_array_or_tensor(array_or_tensor, self.place, self.generator.num_samples)
@@ -424,7 +477,7 @@ class UnifiedTransformer(Model):
 
             if self.mem_efficient:
                 predictions = []
-                for idx in range(0, len(inputs["data_id"]), self.batch_size):
+                for idx in range(0, batch_size, self.batch_size):
                     part_inputs = {
                         name: slice_array_or_tensor(array_or_tensor, self.place, idx, idx + self.batch_size)
                         for name, array_or_tensor in inputs.items()

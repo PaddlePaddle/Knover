@@ -20,7 +20,8 @@ import paddle.fluid.layers as layers
 
 
 class AdamW(fluid.optimizer.AdamOptimizer):
-    """AdamW object for dygraph"""
+    """AdamW optimizer"""
+
     def __init__(self, *args, **kwargs):
         weight_decay = kwargs.pop("weight_decay", None) 
         var_name_to_exclude = kwargs.pop("var_name_to_exclude", ".*layer_norm_scale|.*layer_norm_bias|.*b_0")
@@ -28,9 +29,17 @@ class AdamW(fluid.optimizer.AdamOptimizer):
         self.wd = weight_decay
         self.pat = re.compile(var_name_to_exclude)
 
-    def apply_optimize(self, loss, startup_program, params_grads):
-        """Update params with weight decay."""
-        super(AdamW, self).apply_optimize(loss, startup_program, params_grads)
+    def _apply_weight_decay(self, params_grads):
+        """Apply weight decay."""
         for p, g in params_grads:
             if not self.pat.match(p.name):
-                layers.assign(p * (1. - self.wd * self._learning_rate), p)
+                with p.block.program._optimized_guard([p, g]):
+                    layers.assign(p * (1. - self.wd * self._learning_rate), p)
+        return
+
+    def apply_gradients(self, params_grads):
+        """Apply `weight_decay` in `apply_gradients`."""
+        optimize_ops = super(AdamW, self).apply_gradients(params_grads)
+        if self.wd > 0:
+            self._apply_weight_decay(params_grads)
+        return optimize_ops

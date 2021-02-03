@@ -30,27 +30,38 @@ class Generator(object):
     def add_cmdline_args(cls, parser):
         """Add cmdline argurments."""
         group = parser.add_argument_group("Generator")
-        group.add_argument("--min_dec_len", type=int, default=1)
-        group.add_argument("--max_dec_len", type=int, default=64)
+        group.add_argument("--min_dec_len", type=int, default=1,
+                           help="The minimum length of decoded sequence.")
+        group.add_argument("--max_dec_len", type=int, default=64,
+                           help="The maximum length of decoded sequence.")
 
         group.add_argument("--decoding_strategy", type=str, default="topk_sampling",
-                           choices=["beam_search", "topk_sampling", "topp_sampling"])
-        group.add_argument("--temperature", type=float, default=1.)
-        group.add_argument("--ignore_unk", type=str2bool, default=True)
+                           choices=["beam_search", "topk_sampling", "topp_sampling"],
+                           help="The decoding strategy.")
+        group.add_argument("--temperature", type=float, default=1.,
+                           help="The temperature in each generation step.")
+        group.add_argument("--ignore_unk", type=str2bool, default=True,
+                           help="Whether to ignore UNK token in generation.")
 
         # multi sampling
-        group.add_argument("--num_samples", type=int, default=None)
+        group.add_argument("--num_samples", type=int, default=None,
+                           help="The number of samples will be generated.")
 
         # top-k sampling
-        group.add_argument("--topk", type=int, default=10)
+        group.add_argument("--topk", type=int, default=10,
+                           help="The hyper-parameter in top-k sampling..")
 
         # top-p sampling
-        group.add_argument("--topp", type=float, default=0.9)
+        group.add_argument("--topp", type=float, default=0.9,
+                           help="The hyper-parameter in top-p sampling.")
 
         # beam search
-        group.add_argument("--beam_size", type=int, default=10)
-        group.add_argument("--length_average", type=str2bool, default=True)
-        group.add_argument("--length_penalty", type=float, default=0.0)
+        group.add_argument("--beam_size", type=int, default=10,
+                           help="The hyper-parameter in beam search.")
+        group.add_argument("--length_average", type=str2bool, default=True,
+                           help="The hyper-parameter in beam search.")
+        group.add_argument("--length_penalty", type=float, default=0.0,
+                           help="The hyper-parameter in beam search.")
 
         return group
 
@@ -67,7 +78,6 @@ class Generator(object):
         # basic settings
         self.decoding_strategy = args.decoding_strategy
         self.ignore_unk = args.ignore_unk
-        self.continuous_position = args.continuous_position
         self.temperature = args.temperature
 
         # reranking
@@ -90,11 +100,11 @@ class Generator(object):
         Run inference.
 
         Args:
-            inputs(dict): Its key is input name(str) and its value is a Variable.
-            model(object): A generate model. Need to implement `_generation_network` and `_calc_logits`.
+            inputs: A dict mapping input variable name to correspoding Variable.
+            model: A generate model. Need to implement `_generation_network` and `_calc_logits`.
 
         Returns:
-            dict(str:Variable): Its key is output name(str) and its value is a Variable.
+            predictions: A dict mapping output variable name and correspoding Variable.
         """
         # prepare while loop
         max_len = layers.fill_constant(
@@ -152,20 +162,12 @@ class Generator(object):
                     shape=[-1, 1, 1],
                     dtype=pre_ids.dtype)
 
-            if self.continuous_position:
-                pre_pos = layers.elementwise_mul(
-                    x=layers.fill_constant_batch_size_like(
-                        input=pre_mask,
-                        value=1,
-                        shape=[-1, 1, 1],
-                        dtype=pre_ids.dtype), y=step_idx, axis=0) + pos_bias
-            else:
-                pre_pos = layers.elementwise_mul(
-                    x=layers.fill_constant_batch_size_like(
-                        input=pre_mask,
-                        value=1,
-                        shape=[-1, 1, 1],
-                        dtype=pre_ids.dtype), y=step_idx, axis=0)
+            pre_pos = layers.elementwise_mul(
+                x=layers.fill_constant_batch_size_like(
+                    input=pre_mask,
+                    value=1,
+                    shape=[-1, 1, 1],
+                    dtype=pre_ids.dtype), y=step_idx, axis=0) + pos_bias
 
             dec_out, _ = model._generation_network(
                 token_ids=pre_ids,

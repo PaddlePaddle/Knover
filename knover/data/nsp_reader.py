@@ -29,8 +29,13 @@ class NSPReader(DialogReader):
         """Add cmdline argurments."""
         group = DialogReader.add_cmdline_args(parser)
         group.add_argument("--attention_style", type=str, default="bidirectional",
-                           choices=["bidirectional", "unidirectional"])
-        group.add_argument("--mix_negative_sample", type=str2bool, default=False)
+                           choices=["bidirectional", "unidirectional"],
+                           help="The attention style of NSP model. "
+                           "bidirectional: BERT-like attention; unidirectional: seq2seq attention")
+        group.add_argument("--mix_negative_sample", type=str2bool, default=False,
+                           help="Whether to mix random negative samples into dataset.")
+        group.add_argument("--neg_pool_size", type=int, default=2 ** 16,
+                           help="The size of random negative pool.")
         return group
 
     def __init__(self, args):
@@ -40,16 +45,20 @@ class NSPReader(DialogReader):
 
         self.attention_style = args.attention_style
         self.mix_negative_sample = args.mix_negative_sample
+        self.neg_pool_size = args.neg_pool_size
         return
 
     def _convert_example_to_record(self, example, is_infer):
+        """Convert example to record which can be used as the model's input."""
         record = super(NSPReader, self)._convert_example_to_record(example, False)
         if "label" in example._fields:
             record = record._replace(label=int(example.label))
         return record
 
     def _mix_negative_sample(self, reader, neg_pool_size=2 ** 16):
-        def gen_from_pool(pool):
+        """Mix random negative samples into dataset."""
+        def _gen_from_pool(pool):
+            """Generate negative examples from pool."""
             num_samples = len(pool)
             if num_samples == 1:
                 # only one sample: it is impossible to generate negative sample
@@ -64,7 +73,10 @@ class NSPReader(DialogReader):
                 field_values = {}
                 field_values["token_ids"] = pool[i].token_ids[:idx_i] + pool[j].token_ids[idx_j:]
                 field_values["type_ids"] = pool[i].type_ids[:idx_i] + pool[j].type_ids[idx_j:]
-                field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
+                if self.position_style == "continuous":
+                    field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
+                else:
+                    field_values["pos_ids"] = pool[i].pos_ids[:idx_i] + pool[j].pos_ids[idx_j:]
                 neg_record = self.Record(
                     **field_values,
                     tgt_start_idx=idx_i,
@@ -81,27 +93,25 @@ class NSPReader(DialogReader):
             for record in reader():
                 pool.append(record)
                 if len(pool) == neg_pool_size:
-                    for record in gen_from_pool(pool):
+                    for record in _gen_from_pool(pool):
                         yield record
                     pool = []
             if len(pool) > 0:
-                for record in gen_from_pool(pool):
+                for record in _gen_from_pool(pool):
                     yield record
         return __wrapper__
 
-    def _batch_reader(self, reader, phase=None, is_infer=False, sort_pool_size=2 ** 16):
+    def _batch_reader(self, reader, phase=None, is_infer=False):
+        """Construct a batch reader from a record reader."""
         if self.mix_negative_sample:
-            reader = self._mix_negative_sample(reader)
+            reader = self._mix_negative_sample(reader, self.neg_pool_size)
         return super(NSPReader, self)._batch_reader(
             reader,
             phase=phase,
-            is_infer=is_infer,
-            sort_pool_size=sort_pool_size)
+            is_infer=is_infer)
 
-    def _pad_batch_records(self, batch_records, is_infer):
-        """
-        Padding batch records and construct model's inputs.
-        """
+    def _pad_batch_records(self, batch_records, is_infer, phase=None):
+        """Padding a batch of records and construct model's inputs."""
         batch = {}
         batch_token_ids = [record.token_ids for record in batch_records]
         batch_type_ids = [record.type_ids for record in batch_records]
@@ -113,7 +123,7 @@ class NSPReader(DialogReader):
             batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
             batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
             batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-            tgt_label, tgt_pos, label_pos = mask(
+            tgt_label, tgt_idx, label_idx = mask(
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
                 bos_id=self.bos_id,
@@ -122,7 +132,7 @@ class NSPReader(DialogReader):
                 is_unidirectional=True)
             attention_mask = self._gen_self_attn_mask(batch_token_ids, batch_tgt_start_idx)
         else:
-            batch_mask_token_ids, tgt_label, tgt_pos, label_pos = mask(
+            batch_mask_token_ids, tgt_label, tgt_idx, label_idx = mask(
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
                 bos_id=self.bos_id,
@@ -139,14 +149,15 @@ class NSPReader(DialogReader):
             attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
 
         batch["attention_mask"] = attention_mask
-        batch["label_pos"] = label_pos
+        batch["label_idx"] = label_idx
 
         if not is_infer:
             batch_label = np.array(batch_label).astype("int64").reshape([-1, 1])
             batch["label"] = batch_label
             batch["tgt_label"] = tgt_label
-            batch["tgt_pos"] = tgt_pos
+            batch["tgt_idx"] = tgt_idx
+        else:
+            batch_data_id = [record.data_id for record in batch_records]
+            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
 
-        batch_data_id = [record.data_id for record in batch_records]
-        batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
         return batch

@@ -27,9 +27,7 @@ __all__ = [
 
 
 def register_task(name):
-    """
-    Register a new task class.
-    """
+    """Register a new task class."""
     def __wrapped__(cls):
         if name in TASK_REGISTRY:
             raise ValueError(f"Cannot register duplicate task ({name})")
@@ -42,18 +40,15 @@ def register_task(name):
 
 
 def create_task(args) -> Task:
-    """
-    Create a task.
-    """
+    """Create a task."""
     return TASK_REGISTRY[args.task](args)
 
 
 def add_cmdline_args(parser):
-    """
-    Add cmdline argument of Task.
-    """
+    """Add cmdline argument of Task."""
     group = parser.add_argument_group("Task")
-    group.add_argument("--task", type=str, required=True)
+    group.add_argument("--task", type=str, required=True,
+                       help="The task type.")
 
     args, _ = parser.parse_known_args()
     if args.task not in TASK_REGISTRY:

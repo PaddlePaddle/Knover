@@ -31,20 +31,34 @@ from knover.utils import check_cuda, Timer, parse_args, str2bool
 
 
 def setup_args():
-    """
-    Setup arguments.
-    """
+    """Setup training arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_distributed", type=str2bool, default=False)
-    parser.add_argument("--save_path", type=str, default="output")
-    parser.add_argument("--train_file", type=str, required=True)
-    parser.add_argument("--valid_file", type=str, required=True)
+    parser.add_argument("--is_distributed", type=str2bool, default=False,
+                        help="Whether to run distributed training.")
+    parser.add_argument("--save_path", type=str, default="output",
+                        help="The path where models save.")
+    parser.add_argument("--train_file", type=str, required=True,
+                        help="The training dataset: file / filelist. "
+                        "See more details in `README.md`: `file_format`.")
+    parser.add_argument("--valid_file", type=str, required=True,
+                        help="The validation datasets: files / filelists. "
+                        "The files / filelists are separated by `,`. "
+                        "See more details in `README.md`: `file_format`.")
 
-    parser.add_argument("--start_step", type=int, default=0)
-    parser.add_argument("--num_epochs", type=int, default=20)
-    parser.add_argument("--log_steps", type=int, default=100)
-    parser.add_argument("--validation_steps", type=int, default=1000)
-    parser.add_argument("--save_steps", type=int, default=5000)
+    parser.add_argument("--start_step", type=int, default=0,
+                        help="The start step of training. It will be reflush if you load from a checkpoint.")
+    parser.add_argument("--num_epochs", type=int, default=20,
+                        help="The number times the learning algorithm will work through the entire training dataset.")
+    parser.add_argument("--log_steps", type=int, default=100,
+                        help="Show training / evaluation log information every X steps.")
+    parser.add_argument("--validation_steps", type=int, default=1000,
+                        help="Running validation every X training steps.")
+    parser.add_argument("--save_steps", type=int, default=5000,
+                        help="Save the lastest model every X training steps.")
+
+    parser.add_argument("--save_checkpoint", type=str2bool, default=True,
+                        help="Save completed checkpoint or parameters only. "
+                        "The checkpoint contains all states for continuous training.")
 
     models.add_cmdline_args(parser)
     tasks.add_cmdline_args(parser)
@@ -54,10 +68,15 @@ def setup_args():
     args.display()
     return args
 
+
+def run_cmd(cmd):
+    """Helpful function for running sell command in py scripts."""
+    exitcode, output = subprocess.getstatusoutput(cmd)
+    return output
+
+
 def train(args):
-    """
-    Train main function.
-    """
+    """The main function of training."""
     if args.is_distributed:
         role = role_maker.PaddleCloudRoleMaker(is_collective=True)
         fleet.init(role)
@@ -73,8 +92,11 @@ def train(args):
         trainer_id = 0
     place = fluid.CUDAPlace(gpu_id)
 
+    # setup task and model
     task = tasks.create_task(args)
     model = models.create_model(args, place)
+
+    # setup datasets
     train_generator = task.get_data_loader(
         model,
         input_file=args.train_file,
@@ -91,19 +113,23 @@ def train(args):
         phase="distributed_valid" if args.is_distributed else "valid"
     )
 
-    # run training
+    # start training
     timer = Timer()
     timer.start()
+    print("Training is start.")
     for step, data in enumerate(train_generator(), args.start_step + 1):
         outputs = task.train_step(model, data)
         timer.pause()
+
         if step % args.log_steps == 0:
             time_cost = timer.pass_time
             current_epoch, current_file_index, total_file = task.reader.get_train_progress()
+            current_lr = outputs.pop('scheduled_lr')
             print(f"[train][{current_epoch}] progress: {current_file_index}/{total_file} "
                   f"step: {step}, time: {time_cost:.3f}, "
+                  f"queue size: {train_generator._queue.size()}, "
                   f"speed: {args.log_steps / time_cost:.3f} steps/s")
-            print(f"\tcurrent lr: {outputs.pop('scheduled_lr'):.7f}")
+            print(f"\tcurrent lr: {current_lr:.7f}")
             metrics = task.get_metrics(outputs)
             print("\t" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
             timer.reset()
@@ -111,17 +137,32 @@ def train(args):
         if step % args.validation_steps == 0:
             evaluate(task, model, valid_generator, args, dev_count, gpu_id, step)
 
-        if step % args.save_steps == 0 and trainer_id == 0:
-            save_path = f"{args.save_path}/step_{step}"
-            model.save(save_path, is_checkpoint=True)
-            with open(save_path + ".finish", "w") as f:
-                pass
+        if step % args.save_steps == 0:
+            save_model(model, args.save_path, f"step_{step}", dev_count, gpu_id, args)
 
         timer.start()
     print("Training is completed.")
 
+    return
+
 
 def evaluate(task, model, generator, args, dev_count, gpu_id, training_step):
+    """Run evaluation.
+
+    Run evaluation on dataset which is generated from a generator. Support evaluation on single GPU and multiple GPUs.
+
+    Single GPU:
+    1. Run evaluation on the whole dataset (the generator generate the completed whole dataset).
+    2. Disply evaluation result.
+
+    Multiple GPUs:
+    1. Each GPU run evaluation on the part of dataset (the generator only generate the part of dataset). The dataset
+       is split into `dev_count` parts.
+    2. Save evaluation results on each part of dataset.
+    3. Merge all evaluation results into the final evaluation result.
+    4. Save evaluation result on the whole dataset.
+    5. Disply evaluation result.
+    """
     outputs = None
     print("=" * 80)
     print("Evaluation:")
@@ -129,14 +170,14 @@ def evaluate(task, model, generator, args, dev_count, gpu_id, training_step):
     timer.start()
     for step, data in enumerate(generator(), 1):
         part_outputs = task.eval_step(model, data)
-        outputs = task.merge_mertrics_and_statistics(outputs, part_outputs)
+        outputs = task.merge_metrics_and_statistics(outputs, part_outputs)
 
         if step % args.log_steps == 0:
             metrics = task.get_metrics(outputs)
             print(f"\tstep {step}:" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
 
     if args.is_distributed:
-        # merge evaluation outputs in distributed mode.
+        # save part evaluation outputs in distributed mode.
         part_file = os.path.join(args.save_path, f"evaluation_output.part_{gpu_id}")
         with open(part_file, "w") as fp:
             json.dump(outputs, fp, ensure_ascii=False)
@@ -145,27 +186,54 @@ def evaluate(task, model, generator, args, dev_count, gpu_id, training_step):
             pass
 
         if gpu_id == 0:
+            # wait part evaluation outputs
             part_files = f"evaluation_output.part_*.finish"
             while True:
-                ret = subprocess.getoutput(f"find {args.save_path} -maxdepth 1 -name {part_files}")
+                ret = run_cmd(f"find {args.save_path} -maxdepth 1 -name {part_files}")
                 num_completed = len(ret.split("\n"))
-                if num_completed != dev_count:
-                    time.sleep(1)
-                    continue
-                outputs = None
-                for dev_id in range(dev_count):
-                    part_file = os.path.join(args.save_path, f"evaluation_output.part_{dev_id}")
-                    with open(part_file, "r") as fp:
-                        part_outputs = json.load(fp)
-                        outputs = task.merge_mertrics_and_statistics(outputs, part_outputs)
-                break
-            subprocess.getoutput("rm " + os.path.join(args.save_path, f"evaluation_output.part*"))
+                if num_completed == dev_count:
+                    break
+                time.sleep(1)
 
-    if gpu_id == 0:
-        metrics = task.get_metrics(outputs)
-        print(f"[Evaluation][{training_step}]" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
+            # merge part evaluation outputs
+            outputs = None
+            for dev_id in range(dev_count):
+                part_file = os.path.join(args.save_path, f"evaluation_output.part_{dev_id}")
+                with open(part_file, "r") as fp:
+                    part_outputs = json.load(fp)
+                    outputs = task.merge_metrics_and_statistics(outputs, part_outputs)
+            run_cmd("rm " + os.path.join(args.save_path, "evaluation_output.part_*"))
+
+            # send evaluation outputs
+            for dev_id in range(1, dev_count): # exclude gpu 0
+                part_file = os.path.join(args.save_path, f"evaluation_output.final_part_{dev_id}")
+                with open(part_file, "w") as fp:
+                    json.dump(outputs, fp, ensure_ascii=False)
+                with open(part_file + ".finish", "w") as fp:
+                    pass
+        else:
+            # receive evaluation outputs
+            part_file = os.path.join(args.save_path, f"evaluation_output.final_part_{gpu_id}")
+            while not os.path.exists(part_file + ".finish"):
+                time.sleep(1)
+            with open(part_file, "r") as fp:
+                outputs = json.load(fp)
+            run_cmd(f"rm {part_file}*")
+
+    metrics = task.get_metrics(outputs)
+    print(f"[Evaluation][{training_step}] " + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
     print(f"\ttime cost: {timer.pass_time:.3f}")
     print("=" * 80)
+    return metrics
+
+
+def save_model(model, save_path, tag, dev_count, gpu_id, args):
+    """Save model."""
+    path = os.path.join(save_path, tag)
+    if gpu_id == 0:
+        print(f"Saving model into {path}.")
+        model.save(path, is_checkpoint=args.save_checkpoint)
+        print(f"Model has saved into {path}.")
     return
 
 

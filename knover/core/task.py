@@ -15,15 +15,16 @@
 
 from abc import abstractmethod, ABC
 
+import numpy as np
+
 from knover.core.model import Model
 
 
 class Task(ABC):
-    """
-    Basic task.
-    """
+    """Basic task."""
 
     def __init__(self, args):
+        self.debug_mode = False
         return
 
     def train_step(self, model: Model, inputs):
@@ -35,7 +36,8 @@ class Task(ABC):
     def eval_step(self, model: Model, inputs):
         """Run one evaluation step"""
         outputs = model.eval_step(inputs)
-        outputs = {k: v.tolist()[0] for k, v in outputs.items()}
+        outputs = {k: v.tolist()[0] if isinstance(v, np.ndarray) else v
+                   for k, v in outputs.items()}
         return outputs
 
     def infer_step(self, model: Model, inputs):
@@ -50,10 +52,8 @@ class Task(ABC):
         """
         return predictions
 
-    def merge_mertrics_and_statistics(self, outputs, part_outputs):
-        """
-        Merge metrics and statistics.
-        """
+    def merge_metrics_and_statistics(self, outputs, part_outputs):
+        """Merge metrics and statistics."""
         if outputs is None:
             return part_outputs
 
@@ -73,9 +73,7 @@ class Task(ABC):
         return new_outputs
 
     def get_metrics(self, outputs):
-        """
-        Get metrics.
-        """
+        """Get metrics."""
         if outputs is None:
             raise ValueError("metrics is None")
         outputs = dict(outputs)
@@ -84,5 +82,21 @@ class Task(ABC):
         return outputs
 
     def get_data_loader(self, model, *args, is_infer=False, **kwargs):
+        """Get the model's DataLoader.
+
+        Args:
+            model: the trained model.
+            is_infer: whether to run model in inference mode.
+            args: the arguments of Reader.data_generator.
+            kwargs: the arguments of Reader.data_generator.
+
+        Returns:
+            loader: DataLoader.
+        """
         generator = self.reader.data_generator(*args, is_infer=is_infer, **kwargs)
         return model.get_data_loader(generator, is_infer)
+
+    def debug(self, debug_mode=True):
+        """Switch debug mode."""
+        self.debug_mode = debug_mode
+        return

@@ -37,6 +37,7 @@ class NextSentencePrediction(Task):
         return
 
     def _post_process_infer_output(self, predictions):
+        """Post-process inference output."""
         predictions = [{"data_id": data_id.tolist()[0], "score": score.tolist()[1]}
                        for data_id, score in zip(predictions["data_id"], predictions["scores"])]
         return predictions

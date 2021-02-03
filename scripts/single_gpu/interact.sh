@@ -28,7 +28,7 @@ if [[ ${nsp_init_params:-""} != "" ]]; then
 fi
 
 python -m \
-    knover.scripts.interaction \
+    knover.scripts.interact \
     --model ${model:-"Plato"} \
     --vocab_path ${vocab_path} \
     --spm_model_file ${spm_model_file} \

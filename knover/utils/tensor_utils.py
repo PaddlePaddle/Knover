@@ -19,9 +19,17 @@ import time
 
 import numpy as np
 import paddle.fluid as fluid
+import paddle.fluid.core as core
 
 
-def to_lodtensor(data, place):
+def get_tensor(tensor_name):
+    tensor = fluid.global_scope().find_var(tensor_name).get_tensor()
+    if tensor is None:
+        return None
+    return np.array(tensor)
+
+
+def to_lodtensor(data, place, dtype=None):
     """Convert data to LoDTensor."""
     if place is None:
         return data
@@ -29,10 +37,12 @@ def to_lodtensor(data, place):
     while isinstance(data[0], list):
         lengths.append(list(map(len, data)))
         data = [x for xs in data for x in xs]
-    if isinstance(data[0], float):
-        data = np.array(data, dtype="float32")
-    else:
-        data = np.array(data, dtype="int64")
+    if dtype is None:
+        if isinstance(data[0], float):
+            dtype = "float32"
+        else:
+            dtype = "int64"
+    data = np.array(data, dtype=dtype)
     data_tensor = fluid.LoDTensor()
     data_tensor.set(data, place)
     data_tensor.set_recursive_sequence_lengths(lengths)
@@ -54,7 +64,7 @@ def convert_lodtensor_to_list(tensor):
         shift = 0
         new_data = []
         for j, l in enumerate(lengths):
-            new_data.append(data[shift:shift + l])
+            new_data.append(list(data[shift:shift + l]))
             shift += l
         data = new_data
     return data
@@ -99,6 +109,10 @@ def slice_array_or_tensor(array_or_tensor, place, begin, end):
     if isinstance(array_or_tensor, fluid.LoDTensor):
         data = convert_lodtensor_to_list(array_or_tensor)
         data = data[begin:end]
-        return to_lodtensor(data, place)
+        if array_or_tensor._dtype() == core.VarDesc.VarType.FP32:
+            dtype="float32"
+        else:
+            dtype="int64"
+        return to_lodtensor(data, place, dtype)
     else:
         return array_or_tensor[begin:end]

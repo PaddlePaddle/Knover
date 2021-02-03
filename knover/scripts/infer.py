@@ -30,9 +30,7 @@ from knover.utils.args import parse_args, str2bool
 
 
 def setup_args():
-    """
-    Setup arguments.
-    """
+    """Setup inference arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--is_distributed", type=str2bool, default=False)
     parser.add_argument("--save_path", type=str, default="output")
@@ -52,9 +50,7 @@ def setup_args():
 
 
 def infer(args):
-    """
-    Inference main function.
-    """
+    """Inference main function."""
     if args.is_distributed:
         dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
@@ -67,7 +63,8 @@ def infer(args):
 
     task = tasks.create_task(args)
     model = models.create_model(args, place)
-    infer_generator = task.reader.data_generator(
+    infer_generator = task.get_data_loader(
+        model,
         input_file=args.infer_file,
         num_part=dev_count,
         part_id=gpu_id,
@@ -81,11 +78,12 @@ def infer(args):
     infer_out = {}
     for step, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
-        for info in predictions:
-            infer_out[info["data_id"]] = info
+        for pred in predictions:
+            infer_out[pred["data_id"]] = pred
         if step % args.log_steps == 0:
             time_cost = timer.pass_time
             print(f"\tstep: {step}, time: {time_cost:.3f}, "
+                  f"queue size: {infer_generator._queue.size()}, "
                   f"speed: {step / time_cost:.3f} steps/s")
 
     time_cost = timer.pass_time
@@ -96,37 +94,39 @@ def infer(args):
         # merge inference outputs in distributed mode.
         part_file = os.path.join(args.save_path, f"inference_output.part_{gpu_id}")
         with open(part_file, "w") as fp:
-            json.dump(infer_out, fp, ensure_ascii=False)
+            json.dump(infer_out, fp, ensure_ascii=False, indent=2)
         part_finish_file = os.path.join(args.save_path, f"inference_output.part_{gpu_id}.finish")
         with open(part_finish_file, "w"):
             pass
 
-        if gpu_id == 0:
-            part_files = f"inference_output.part_*.finish"
-            while True:
-                ret = subprocess.getoutput(f"find {args.save_path} -maxdepth 1 -name {part_files}")
-                num_completed = len(ret.split("\n"))
-                if num_completed != dev_count:
-                    time.sleep(1)
-                    continue
-                infer_out = {}
-                for dev_id in range(dev_count):
-                    part_file = os.path.join(args.save_path, f"inference_output.part_{dev_id}")
-                    with open(part_file, "r") as fp:
-                        part_infer_out = json.load(fp)
-                        for data_id in part_infer_out:
-                            infer_out[data_id] = part_infer_out[data_id]
-                break
-            subprocess.getoutput("rm " + os.path.join(args.save_path, f"inference_output.part*"))
+    # Only run on master GPU in each node
+    if gpu_id != 0:
+        return
 
-    if gpu_id == 0:
-        # save inference outputs
-        inference_output = os.path.join(args.save_path, "inference_output.txt")
-        with open(inference_output, "w") as f:
-            for data_id in sorted(infer_out.keys(), key=lambda x: int(x)):
-                output_line = "\t".join(str(infer_out[data_id][name]) for name in args.output_name.split(","))
-                f.write(output_line + "\n")
-        print(f"save inference result into: {inference_output}")
+    if args.is_distributed:
+        part_files = f"inference_output.part_*.finish"
+        while True:
+            ret = subprocess.getoutput(f"find {args.save_path} -maxdepth 1 -name {part_files}")
+            num_completed = len(ret.split("\n"))
+            if num_completed != dev_count:
+                time.sleep(1)
+                continue
+            infer_out = {}
+            for dev_id in range(dev_count):
+                part_file = os.path.join(args.save_path, f"inference_output.part_{dev_id}")
+                with open(part_file, "r") as fp:
+                    part_infer_out = json.load(fp)
+                    for data_id in part_infer_out:
+                        infer_out[data_id] = part_infer_out[data_id]
+            break
+        subprocess.getoutput("rm " + os.path.join(args.save_path, f"inference_output.part*"))
+
+    # save inference outputs
+    inference_output = os.path.join(args.save_path, "inference_output.txt")
+    with open(inference_output, "w") as f:
+        for data_id in sorted(infer_out.keys(), key=lambda x: int(x)):
+            f.write("\t".join(map(str, [infer_out[data_id][name] for name in args.output_name.split(",")])) + "\n")
+    print(f"save inference result into: {inference_output}")
 
     return
 

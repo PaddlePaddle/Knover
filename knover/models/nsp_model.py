@@ -28,7 +28,7 @@ class NSPModel(UnifiedTransformer):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = UnifiedTransformer.add_cmdline_args(parser)
         group.add_argument("--use_mlm", type=str2bool, default=True,
                            help="Whether to train NSP model with MLM loss.")
@@ -59,7 +59,7 @@ class NSPModel(UnifiedTransformer):
         if not is_infer:
             feed_dict["label"] = layers.data(name="label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 1], dtype="int64")
+            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
         else:
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         return feed_dict

@@ -31,7 +31,7 @@ class Plato(UnifiedTransformer):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = UnifiedTransformer.add_cmdline_args(parser)
         group.add_argument("--use_bow", type=str2bool, default=True,
                            help="Whether to use BoW loss in training.")
@@ -89,7 +89,7 @@ class Plato(UnifiedTransformer):
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 1], dtype="int64")
+            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
 
             if self.use_bow:
                 feed_dict["bow_label"] = layers.data(name="bow_label", shape=[-1, 1], dtype="int64")
@@ -136,7 +136,7 @@ class Plato(UnifiedTransformer):
             enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
 
         Returns:
-            logits: the logits of prediction task, shape is [num_predictions, vocab_size].
+            logits: the logits of prediction task, shape is [batch_size, latent_type_size].
         """
         recognition_feat = self._get_pooled_output(enc_out, name="recognition")
         logits = layers.fc(

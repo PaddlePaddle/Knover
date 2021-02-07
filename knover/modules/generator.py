@@ -28,7 +28,7 @@ class Generator(object):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = parser.add_argument_group("Generator")
         group.add_argument("--min_dec_len", type=int, default=1,
                            help="The minimum length of decoded sequence.")
@@ -45,7 +45,7 @@ class Generator(object):
 
         # multi sampling
         group.add_argument("--num_samples", type=int, default=None,
-                           help="The number of samples will be generated.")
+                           help="The number of sampling in generation. Multiple samples will rerank by a score.")
 
         # top-k sampling
         group.add_argument("--topk", type=int, default=10,
@@ -100,11 +100,12 @@ class Generator(object):
         Run inference.
 
         Args:
-            inputs: A dict mapping input variable name to correspoding Variable.
-            model: A generate model. Need to implement `_generation_network` and `_calc_logits`.
+            model: A generation model. Need to implement `_generation_network` and `_calc_logits`.
+            inputs: A dict mapping input variable names to corresponding Variables.
+            outputs: A dict mapping output variable name to corresponding Variables.
 
         Returns:
-            predictions: A dict mapping output variable name and correspoding Variable.
+            predictions: A dict mapping keys to corresponding predictions.
         """
         # prepare while loop
         max_len = layers.fill_constant(

@@ -30,7 +30,7 @@ class DialogGeneration(Task):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = parser.add_argument_group("Task")
         group.add_argument("--do_generation", type=str2bool, default=True,
                            help="Whether to run generation on inference phase. "
@@ -39,9 +39,7 @@ class DialogGeneration(Task):
                            help="Whether to run in Chinese data.")
 
         group.add_argument("--nsp_inference_model_path", type=str, default=None,
-                           help="The path of NSP inference model which will be given the NSP ranking scores.")
-        group.add_argument("--nsp_attention_style", type=str, default="bidirectional",
-                           help="The style of NSP model.")
+                           help="The path of NSP inference model which is used to provide the NSP ranking scores.")
 
         group.add_argument("--ranking_score", type=str, default="decode_score",
                            help="Which score will be used to rerank.")
@@ -67,7 +65,6 @@ class DialogGeneration(Task):
 
         if args.nsp_inference_model_path:
             self.nsp_predictor = create_predictor(args.nsp_inference_model_path, args.is_distributed)
-            self.nsp_attention_style = args.nsp_attention_style
         else:
             self.nsp_predictor = None
 
@@ -85,7 +82,7 @@ class DialogGeneration(Task):
             predictions: the generation outputs of the model.
 
         Returns:
-            Return the top-1 prediction of each data.
+            Return the top-1 prediction.
         """
         if self.nsp_predictor is not None:
             get_nsp_score_batch(self.nsp_predictor, predictions)
@@ -139,14 +136,14 @@ class DialogGeneration(Task):
     def _post_process_scoring_output(self, predictions):
         """Post-process scoring output.
 
-        The score is calculated by perplexity(PPL).
+        The score is calculated by perplexity (PPL).
         """
         raise NotImplementedError
 
     def _post_process_infer_output(self, predictions):
         """Post-process inference output.
 
-        Dialogue generation support two type of inference.
+        Dialogue generation task supports two type of inference.
         1. Generating a response for the given context.
         2. Calculate the response generation score for the give context.
         """
@@ -213,7 +210,7 @@ def post_process_context(token_ids, reader, merge=True):
     """Post-process the context id sequence.
 
     Truncate the <bos> token.
-    Convert token ids to words(merge=True) or tokens(merge=False).
+    Convert token ids to words (merge = True) or tokens (merge = False).
 
     Args:
         token_ids: Token id sequence.
@@ -243,7 +240,7 @@ def post_process_response(token_ids, reader, merge=True):
 
     Args:
         token_ids: Token id sequence.
-        merge: If ture, merge subword(token) and return words, otherwise return tokens.
+        merge: If true, merge subwords (tokens) into words, otherwise return tokens.
 
     Returns:
         token_ids: Truncated token_ids.
@@ -272,7 +269,7 @@ def check_cross_turn_repetition(context, pred, eos_idx, is_cn=False):
         is_cn: Chinese version repetition detection. If true, calcuate repetition on characters.
 
     Returns:
-        Whether the cross-turn repetition happens.
+        Whether the cross-turn repetition is detected.
     """
     if isinstance(pred[0], str):
         context = [[tok.lower() for tok in utt] for utt in context]
@@ -303,7 +300,7 @@ def check_in_turn_repetition(pred, is_cn=False):
         is_cn: Chinese version repetition detection. If true, calcuate repetition on characters.
 
     Returns:
-        Whether the in-turn repetion happens.
+        Whether the in-turn repetion is detected.
     """
     if isinstance(pred[0], str):
         pred = [tok.lower() for tok in pred]

@@ -61,11 +61,11 @@ def convert_lodtensor_to_list(tensor):
     recursive_sequence_lengths = tensor.recursive_sequence_lengths()
     recursive_sequence_lengths.reverse()
     for i, lengths in enumerate(recursive_sequence_lengths):
-        shift = 0
+        offset = 0
         new_data = []
         for j, l in enumerate(lengths):
-            new_data.append(list(data[shift:shift + l]))
-            shift += l
+            new_data.append(list(data[offset:offset + l]))
+            offset += l
         data = new_data
     return data
 

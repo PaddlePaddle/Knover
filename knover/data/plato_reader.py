@@ -24,7 +24,6 @@ class PlatoReader(DialogReader):
 
     def __init__(self, args):
         super(PlatoReader, self).__init__(args)
-        self.latent_type_size = args.latent_type_size
         self.use_bow = args.use_bow
 
     def _pad_batch_records(self, batch_records, is_infer, **kwargs):
@@ -47,12 +46,12 @@ class PlatoReader(DialogReader):
             batch_token_ids,
             batch_tgt_start_idx=batch_tgt_start_idx,
             is_unidirectional=True,
-            shift_len=1)
+            num_aux_token=1)
         if not is_infer:
             batch["recognition_mask"] = self._gen_self_attn_mask(
                 batch_token_ids,
                 is_unidirectional=False,
-                shift_len=1)
+                num_aux_token=1)
 
         if is_infer:
             tgt_ids = np.array([[[self.bos_id]]] * batch_size, dtype="int64")
@@ -75,7 +74,7 @@ class PlatoReader(DialogReader):
             mask_return_list = mask(
                 batch_tokens=batch_token_ids,
                 vocab_size=self.vocab_size,
-                sent_b_starts=batch_tgt_start_idx,
+                tgt_starts=batch_tgt_start_idx,
                 is_unidirectional=True,
                 use_latent=True,
                 use_bow=self.use_bow)

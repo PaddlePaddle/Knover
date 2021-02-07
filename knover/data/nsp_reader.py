@@ -26,12 +26,8 @@ class NSPReader(DialogReader):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = DialogReader.add_cmdline_args(parser)
-        group.add_argument("--attention_style", type=str, default="bidirectional",
-                           choices=["bidirectional", "unidirectional"],
-                           help="The attention style of NSP model. "
-                           "bidirectional: BERT-like attention; unidirectional: seq2seq attention")
         group.add_argument("--mix_negative_sample", type=str2bool, default=False,
                            help="Whether to mix random negative samples into dataset.")
         group.add_argument("--neg_pool_size", type=int, default=2 ** 16,
@@ -43,7 +39,6 @@ class NSPReader(DialogReader):
         self.fields.append("label")
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
 
-        self.attention_style = args.attention_style
         self.mix_negative_sample = args.mix_negative_sample
         self.neg_pool_size = args.neg_pool_size
         return
@@ -58,10 +53,10 @@ class NSPReader(DialogReader):
     def _mix_negative_sample(self, reader, neg_pool_size=2 ** 16):
         """Mix random negative samples into dataset."""
         def _gen_from_pool(pool):
-            """Generate negative examples from pool."""
+            """Generate negative samples from pool."""
             num_samples = len(pool)
             if num_samples == 1:
-                # only one sample: it is impossible to generate negative sample
+                # it is impossible to generate negative sample when the pool has only one sample
                 yield pool[0]._replace(label=1)
                 return
             self.global_rng.shuffle(pool)
@@ -119,34 +114,21 @@ class NSPReader(DialogReader):
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch_label = [record.label for record in batch_records]
 
-        if self.attention_style == "unidirectional":
-            batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-            batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
-            batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-            tgt_label, tgt_idx, label_idx = mask(
-                batch_tokens=batch_token_ids,
-                vocab_size=self.vocab_size,
-                bos_id=self.bos_id,
-                sent_b_starts=batch_tgt_start_idx,
-                labels=batch_label,
-                is_unidirectional=True)
-            attention_mask = self._gen_self_attn_mask(batch_token_ids, batch_tgt_start_idx)
-        else:
-            batch_mask_token_ids, tgt_label, tgt_idx, label_idx = mask(
-                batch_tokens=batch_token_ids,
-                vocab_size=self.vocab_size,
-                bos_id=self.bos_id,
-                eos_id=self.eos_id,
-                mask_id=self.mask_id,
-                sent_b_starts=batch_tgt_start_idx,
-                labels=batch_label,
-                is_unidirectional=False)
-            if not is_infer:
-                batch_token_ids = batch_mask_token_ids
-            batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-            batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
-            batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-            attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
+        batch_mask_token_ids, tgt_label, tgt_idx, label_idx = mask(
+            batch_tokens=batch_token_ids,
+            vocab_size=self.vocab_size,
+            bos_id=self.bos_id,
+            eos_id=self.eos_id,
+            mask_id=self.mask_id,
+            tgt_starts=batch_tgt_start_idx,
+            labels=batch_label,
+            is_unidirectional=False)
+        if not is_infer:
+            batch_token_ids = batch_mask_token_ids
+        batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
+        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
+        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
+        attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
 
         batch["attention_mask"] = attention_mask
         batch["label_idx"] = label_idx

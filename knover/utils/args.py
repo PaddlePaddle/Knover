@@ -43,7 +43,7 @@ class Args(dict):
             if isinstance(v, Args):
                 if name in v:
                     return v[name]
-        return None
+        raise ValueError(f"Cannot find argument: {name}")
 
     def get(self, key, default_value=None):
         """Get the value of corresponding key."""

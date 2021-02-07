@@ -57,7 +57,7 @@ def preprocess_text(inputs, remove_space=True, lower=False):
 
 
 def encode_pieces(spm_model, text, return_unicode=True, sample=False):
-    """turn sentences into word pieces."""
+    """Convert sentences into word pieces."""
     text = clean_text(text)
 
     if not sample:
@@ -96,7 +96,7 @@ class SentencePieceTokenizer(object):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = parser.add_argument_group("Tokenizer")
         group.add_argument("--vocab_path", type=str, required=True)
         group.add_argument("--do_lower_case", type=str2bool, default=False)

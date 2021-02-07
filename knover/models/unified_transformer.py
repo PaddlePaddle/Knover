@@ -30,7 +30,7 @@ class UnifiedTransformer(Model):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = Model.add_cmdline_args(parser)
         group.add_argument("--weight_sharing", type=str2bool, default=True,
                            help="Whether to share the token embedding with the output FC.")
@@ -43,7 +43,7 @@ class UnifiedTransformer(Model):
     def __init__(self, args, place):
         self.max_seq_len = args.max_seq_len
 
-        self.emb_size = args.emb_size or args.hidden_size
+        self.emb_size = args.get("emb_size", args.hidden_size)
         self.hidden_size = args.hidden_size
 
         self.n_layer = args.num_hidden_layers
@@ -59,7 +59,7 @@ class UnifiedTransformer(Model):
         self.type_emb_name = "sent_embedding"
         self.pos_emb_name = "pos_embedding"
 
-        self.epsilon = args.epsilon or 1e-5
+        self.epsilon = args.get("epsilon", 1e-5)
         self.n_layer_per_block = args.get("n_layer_per_block", 1)
         self.pre_encoder_cmd = args.get("pre_encoder_cmd", "nd")
         self.preprocess_cmd = args.get("preprocess_cmd", "")
@@ -165,7 +165,7 @@ class UnifiedTransformer(Model):
 
         Args:
             enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
-            idx(optional): the selected indices in pooling operator, shape is [batch_size].
+            idx (optional): the selected indices in pooling operator, shape is [batch_size].
             name: a string, the name of the pooling layer.
 
         Returns:
@@ -277,11 +277,11 @@ class UnifiedTransformer(Model):
         Returns:
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
-        enc_out = layers.reshape(
-            x=enc_out, shape=[-1, self.hidden_size])
         if tgt_idx is not None:
-            seq_feat = layers.gather(input=enc_out, index=tgt_idx)
+            seq_feat = layers.gather_nd(input=enc_out, index=tgt_idx)
         else:
+            enc_out = layers.reshape(
+                x=enc_out, shape=[-1, self.hidden_size])
             seq_feat = enc_out
 
         seq_trans_feat = layers.fc(
@@ -352,7 +352,7 @@ class UnifiedTransformer(Model):
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 1], dtype="int64")
+            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
 
         return feed_dict
 

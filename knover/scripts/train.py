@@ -36,7 +36,7 @@ def setup_args():
     parser.add_argument("--is_distributed", type=str2bool, default=False,
                         help="Whether to run distributed training.")
     parser.add_argument("--save_path", type=str, default="output",
-                        help="The path where models save.")
+                        help="The path where to save models.")
     parser.add_argument("--train_file", type=str, required=True,
                         help="The training dataset: file / filelist. "
                         "See more details in `README.md`: `file_format`.")
@@ -46,13 +46,13 @@ def setup_args():
                         "See more details in `README.md`: `file_format`.")
 
     parser.add_argument("--start_step", type=int, default=0,
-                        help="The start step of training. It will be reflush if you load from a checkpoint.")
+                        help="The start step of training. It will be updated if you load from a checkpoint.")
     parser.add_argument("--num_epochs", type=int, default=20,
-                        help="The number times the learning algorithm will work through the entire training dataset.")
+                        help="The number of times that the learning algorithm will work through the entire training dataset.")
     parser.add_argument("--log_steps", type=int, default=100,
-                        help="Show training / evaluation log information every X steps.")
+                        help="Display training / evaluation log information every X steps.")
     parser.add_argument("--validation_steps", type=int, default=1000,
-                        help="Running validation every X training steps.")
+                        help="Run validation every X training steps.")
     parser.add_argument("--save_steps", type=int, default=5000,
                         help="Save the lastest model every X training steps.")
 
@@ -70,7 +70,7 @@ def setup_args():
 
 
 def run_cmd(cmd):
-    """Helpful function for running sell command in py scripts."""
+    """Helpful function for running shell command in py scripts."""
     exitcode, output = subprocess.getstatusoutput(cmd)
     return output
 
@@ -152,16 +152,16 @@ def evaluate(task, model, generator, args, dev_count, gpu_id, training_step):
     Run evaluation on dataset which is generated from a generator. Support evaluation on single GPU and multiple GPUs.
 
     Single GPU:
-    1. Run evaluation on the whole dataset (the generator generate the completed whole dataset).
+    1. Run evaluation on the whole dataset (the generator generates the completed whole dataset).
     2. Disply evaluation result.
 
     Multiple GPUs:
-    1. Each GPU run evaluation on the part of dataset (the generator only generate the part of dataset). The dataset
+    1. Each GPU run evaluation on a part of dataset (the generator only generate a part of dataset). The dataset
        is split into `dev_count` parts.
     2. Save evaluation results on each part of dataset.
     3. Merge all evaluation results into the final evaluation result.
     4. Save evaluation result on the whole dataset.
-    5. Disply evaluation result.
+    5. Display evaluation result.
     """
     outputs = None
     print("=" * 80)

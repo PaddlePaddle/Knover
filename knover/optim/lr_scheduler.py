@@ -22,7 +22,7 @@ import paddle.fluid.layers.ops as ops
 
 
 def linear_warmup_and_linear_decay(learning_rate, end_lr, warmup_steps, max_training_steps):
-    """Applies linear warmup and cosine decay to the learning rate."""
+    """Applies linear warmup and linear decay to the learning rate."""
     dtype = "float32"
 
     with fluid.default_main_program()._lr_schedule_guard():
@@ -80,7 +80,7 @@ def linear_warmup_and_cosine_decay(learning_rate, end_lr, warmup_steps, max_trai
 
 
 def linear_warmup_and_invsqrt_decay(learning_rate, warmup_steps, decay_steps):
-    """Applies linear warmup and cosine decay to the learning rate."""
+    """Applies linear warmup and invsqrt decay to the learning rate."""
     dtype = "float32"
 
     with fluid.default_main_program()._lr_schedule_guard():

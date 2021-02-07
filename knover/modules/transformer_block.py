@@ -36,14 +36,13 @@ def multi_head_attention(queries,
     """ Multi-Head Attention.
 
     Note that attn_bias is added to the logit before computing softmax activiation to
-    mask certain selected positions so that they will not considered in attention weights.
+    mask certain selected positions so that they will not be considered in attention weights.
     """
     keys = queries if keys is None else keys
     values = keys if values is None else values
 
     if not (len(queries.shape) == len(keys.shape) == len(values.shape) == 3):
-        raise ValueError(
-            "Inputs: quries, keys and values should all be 3-D tensors.")
+        raise ValueError("Inputs: quries, keys and values should all be 3-D tensors.")
 
     def __compute_qkv(queries, keys, values, n_head, d_key, d_value):
         """Add linear projection to queries, keys, and values."""
@@ -75,8 +74,8 @@ def multi_head_attention(queries,
 
         Reshape the last dimension of inpunt tensor x so that it becomes two
         dimensions and then transpose. Specifically, input a tensor with shape
-        [bs, max_sequence_length, n_head * hidden_dim] then output a tensor
-        with shape [bs, n_head, max_sequence_length, hidden_dim].
+        [batch_size, max_seq_len, hidden_dim] then output a tensor
+        with shape [batch_size, num_heads, max_seq_len, hidden_dim // num_heads].
         """
         hidden_size = x.shape[-1]
         # The value 0 in shape attr means copying the corresponding dimension
@@ -91,8 +90,8 @@ def multi_head_attention(queries,
     def __combine_heads(x):
         """Merge multiply chunks into output embeddings.
 
-        Transpose and then reshape the last two dimensions of inpunt tensor x
-        so that it becomes one dimension, which is reverse to __split_heads.
+        Transpose and then reshape the last two dimensions of input tensor x
+        into one dimension, which is reverse to __split_heads.
         """
         if len(x.shape) == 3: return x
         if len(x.shape) != 4:
@@ -260,7 +259,7 @@ def encoder_layer(input,
 
     The encoder layers that can be stacked to form a deep encoder.
     This module consits of a multi-head (self) attention followed by
-    position-wise feed-forward networks and both the two components companied
+    position-wise feed-forward networks and both the two components are companied
     with the pre_process_layer / post_process_layer to add residual connection,
     layer normalization and droput.
     """

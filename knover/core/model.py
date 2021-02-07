@@ -32,12 +32,12 @@ class Model(ABC):
 
     Attributes:
         place: CPUPlace or CUDAPlace.
-        exe: A executor which used in static graph mode.
+        exe: A executor which is used in static graph mode.
     """
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        """Add cmdline argurments."""
+        """Add cmdline arguments."""
         group = parser.add_argument_group("Model")
 
         # initialize model
@@ -48,10 +48,10 @@ class Model(ABC):
         group.add_argument("--optimizer", type=str, default="AdamW",
                            choices=["AdamW"])
         group.add_argument("-lr", "--learning_rate", type=float, default=1e-5,
-                           help="The learning rate for optimizer.")
+                           help="The peak learning rate for optimizer.")
         group.add_argument("--warmup_steps", type=int, default=0,
                            help="The warmup steps.")
-        group.add_argument("--lr_scheuler", type=str, default="noam",
+        group.add_argument("--lr_scheduler", type=str, default="noam",
                            choices=["linear", "noam", "constant", "cosine"],
                            help="The learning rate scheduler for training.")
         group.add_argument("--max_training_steps", type=int, default=2000,
@@ -129,7 +129,11 @@ class Model(ABC):
         return
 
     def _set_checkpoints(self, checkpoints):
-        """Set checkpoints for recompute."""
+        """Set checkpoints for recompute.
+
+        Args:
+            checkpoints: A list of Variables which need to set as checkpoints.
+        """
         self.dist_strategy.recompute_checkpoints = checkpoints
         return
 
@@ -197,7 +201,7 @@ class Model(ABC):
 
         Args:
             model_path: The path of initial model.
-            is_checkpoint: If true, load parameters and other variables(such as moments in Adam optimizer), otherwise load only parameters.
+            is_checkpoint: If true, load parameters and other variables (such as moments in Adam optimizer), otherwise load only parameters.
         """
         # TODO: support dygraph.
         print(f"Loading model from {model_path}.")
@@ -228,7 +232,7 @@ class Model(ABC):
 
         Args:
             model_path: The path where we save the model.
-            is_checkpoint: If true, save parameters and other variables(such as moments in Adam optimizer), otherwise save only parameters.
+            is_checkpoint: If true, save parameters and other variables (such as moments in Adam optimizer), otherwise save only parameters.
         """
         # TODO: support dygraph.
         if is_checkpoint:
@@ -243,10 +247,10 @@ class Model(ABC):
         Convert hierarchical list into LoD Tensor, and keep numpy.ndarray.
 
         Args:
-            inputs: A dict mapping keys to coreespoding data. The data is either a hierarchical list or a numpy.ndarray.
+            inputs: A dict mapping keys to corresponding data. The data is either a hierarchical list or a numpy.ndarray.
 
         Returns:
-            inputs: A dict mapping keys to coreespoding model's data. The data is either a LoDTensor or a numpy.ndarray.
+            inputs: A dict mapping keys to corresponding model's data. The data is either a LoDTensor or a numpy.ndarray.
         """
         if isinstance(inputs, list):
             # return list direclty which is used in `get_data_loader`.
@@ -260,7 +264,7 @@ class Model(ABC):
         """Get the DataLoader of the model.
 
         Args:
-            generator: If generator is not `None`, the data loader set it as the batch generator.
+            generator: If generator is not `None`, the DataLoader sets it as the batch generator.
             is_infer: If true, get inference's DataLoader, otherwise get training / evaluation 's DataLoader.
 
         Returns:
@@ -299,29 +303,60 @@ class Model(ABC):
 
     @abstractmethod
     def forward(self, inputs, is_infer=False):
-        """Run model main forward."""
+        """Run model main forward.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            outputs: A dict mapping keys to corresponding output data.
+        """
         pass
 
     @abstractmethod
     def get_metrics(self, inputs, outputs):
-        """Get metrics."""
+        """Get metrics.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+            outputs: A dict mapping keys to corresponding output data.
+
+        Returns:
+            metrics: A dict mapping keys to corresponding metrics.
+        """
         pass
 
     @abstractmethod
     def get_statistics(self, inputs, outputs):
-        """Get statistics."""
+        """Get statistics.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+            outputs: A dict mapping keys to corresponding output data.
+
+        Returns:
+            statistics: A dict mapping keys to corresponding statistics.
+        """
         pass
 
     @abstractmethod
     def infer(self, inputs, outputs):
-        """Run model inference."""
+        """Run inference.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+            outputs: A dict mapping keys to corresponding output data.
+
+        Returns:
+            predictions: A dict mapping keys to corresponding predictions.
+        """
         pass
 
     def optimize(self, metrics):
         """Optimize the model by loss.
 
         Args:
-            metrics: A dict mapping metric names into difference metrics, which must be include loss.
+            metrics: A dict mapping metric names to corresponding metrics, which must include loss.
         """
         # TODO: support dygraph
         # lr scheduler
@@ -375,9 +410,9 @@ class Model(ABC):
 
         Args:
             program: The executable program.
-            inputs: A dict mapping keys to input variables.
-            fetch_dict: A dict mapping keys to fetch output variables.
-            kwargs: The other argurments for executing program.
+            inputs: A dict mapping variable names to corresponding input variables.
+            fetch_dict: A dict mapping variable names to corresponding output variables.
+            kwargs: Other arguments for executing program.
 
         Returns:
             outputs: A dict mapping keys to output variables.
@@ -388,7 +423,14 @@ class Model(ABC):
         return dict(zip(fetch_dict.keys(), fetch_vars))
 
     def train_step(self, inputs):
-        """Run one training step."""
+        """Run one training step.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            metrics: A dict mapping keys to corresponding metrics.
+        """
         # TODO: support dygraph.
         return self._execute(
             self.train_program,
@@ -397,7 +439,14 @@ class Model(ABC):
             use_program_cache=True)
 
     def eval_step(self, inputs):
-        """Run one evaluation step."""
+        """Run one evaluation step.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            metrics: A dict mapping keys to corresponding metrics.
+        """
         # TODO: support dygraph.
         outputs = self._execute(
             self.eval_program,
@@ -410,7 +459,14 @@ class Model(ABC):
         return outputs
 
     def infer_step(self, inputs):
-        """Run one inference step."""
+        """Run one inference step.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            predictions: A dict mapping keys to corresponding predictions.
+        """
         # TODO: support dygraph.
         return self._execute(
             self.infer_program,
@@ -420,8 +476,10 @@ class Model(ABC):
     def save_inference_model(self, inference_model_path):
         """Save the inference model.
 
+        Only save the inference program.
+
         Args:
-            inference_model_path: the path of saved inference model.
+            inference_model_path: The path of saved inference model.
         """
         feed_list = [var.name for var in self.infer_feed_dict.values()]
         fetch_list = list(self.infer_fetch_dict.values())

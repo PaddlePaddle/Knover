@@ -48,16 +48,16 @@ def mask(batch_tokens,
         else:
             num_aux_token = 0
         for sent_index, sent in enumerate(batch_tokens):
-            sent_b_index = tgt_starts[sent_index] if tgt_starts is not None else 0
+            tgt_start = tgt_starts[sent_index] if tgt_starts is not None else 0
             need_cal = True
             if labels is not None:
                 label_idx.extend([sent_index, len(sent) - 1 + num_aux_token])
                 if labels[sent_index] == 0:
                     need_cal = False
-            mask_label.extend(sent[sent_b_index + 1:])
+            mask_label.extend(sent[tgt_start + 1:])
             mask_idx.extend([
                 [sent_index, i + num_aux_token]
-                for i in range(sent_b_index, len(sent) - 1)
+                for i in range(tgt_start, len(sent) - 1)
             ])
         mask_label = np.array(mask_label).astype("int64").reshape([-1, 1])
         mask_idx = np.array(mask_idx).astype("int64").reshape([-1, 2])
@@ -68,22 +68,22 @@ def mask(batch_tokens,
             bow_label = []
             bow_idx = []
             for sent_index, sent in enumerate(batch_tokens):
-                sent_b_index = tgt_starts[sent_index] if tgt_starts is not None else 0
+                tgt_start = tgt_starts[sent_index] if tgt_starts is not None else 0
                 def __filter__(tok_id):
                     # TODO: exclude [EOS] from bow loss
                     return True
                 bow_idx.extend([
-                    sent_index
-                    for i in range(sent_b_index + 1, len(sent))
+                    [sent_index, 0]
+                    for i in range(tgt_start + 1, len(sent))
                     if __filter__(sent[i])
                 ])
                 bow_label.extend([
                     sent[i]
-                    for i in range(sent_b_index + 1, len(sent))
+                    for i in range(tgt_start + 1, len(sent))
                     if __filter__(sent[i])
                 ])
             bow_label = np.array(bow_label).astype("int64").reshape([-1, 1])
-            bow_idx = np.array(bow_idx).astype("int64").reshape([-1, 1])
+            bow_idx = np.array(bow_idx).astype("int64").reshape([-1, 2])
             return_list += [bow_label, bow_idx]
     else:
         # bidirectional mask language model
@@ -95,7 +95,7 @@ def mask(batch_tokens,
         for sent_index, sent in enumerate(batch_tokens):
             # add pair label position
             if labels is not None:
-                label_idx.append(sent_index * max_len)
+                label_idx.append([sent_index, 0])
 
             # add mask label and position
             for token_index, token in enumerate(sent):
@@ -126,7 +126,7 @@ def mask(batch_tokens,
         return_list = [batch_tokens, mask_label, mask_idx]
 
     if labels is not None:
-        label_idx = np.array(label_idx).astype("int64").reshape([-1, 1])
+        label_idx = np.array(label_idx).astype("int64").reshape([-1, 2])
         assert len(labels) == len(label_idx)
         return_list.append(label_idx)
     return return_list

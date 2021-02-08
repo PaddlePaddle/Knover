@@ -88,7 +88,7 @@ class UnifiedTransformer(Model):
 
         # task-related
         self.generator = Generator(args)
-        self.do_generation = args.do_generation
+        self.do_generation = args.get("do_generation", False)
 
         super(UnifiedTransformer, self).__init__(args, place)
 
@@ -165,7 +165,7 @@ class UnifiedTransformer(Model):
 
         Args:
             enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
-            idx (optional): the selected indices in pooling operator, shape is [batch_size].
+            idx (optional): the selected indices in pooling operator, shape is [batch_size, 1] or [batch_size, 2].
             name: a string, the name of the pooling layer.
 
         Returns:
@@ -173,9 +173,13 @@ class UnifiedTransformer(Model):
         """
         if idx is None:
             feat = layers.slice(input=enc_out, axes=[1], starts=[0], ends=[1])
-        else:
+        elif len(idx.shape) == 2 and idx.shape[1] == 1:
             enc_out = layers.reshape(x=enc_out, shape=[-1, self.hidden_size])
             feat = layers.gather(input=enc_out, index=idx)
+        elif len(idx.shape) == 2 and idx.shape[1] == 2:
+            feat = layers.gather_nd(input=enc_out, index=idx)
+        else:
+            raise ValueError(f"Invalid indices shape {idx.shape} is used")
 
         pooled_out = layers.fc(
             input=feat,
@@ -230,7 +234,7 @@ class UnifiedTransformer(Model):
             emb_out, n_head_self_attn_mask, self.generation_caches,
             gather_idx=gather_idx)
 
-    def _encode(self, emb_intput, n_head_self_attn_mask, caches=None, gather_idx=None):
+    def _encode(self, emb_input, n_head_self_attn_mask, caches=None, gather_idx=None):
         """Run Transformer encode pass.
 
         Args:
@@ -242,7 +246,7 @@ class UnifiedTransformer(Model):
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
         return encoder(
-            enc_input=emb_intput,
+            enc_input=emb_input,
             attn_bias=n_head_self_attn_mask,
             n_layer=self.n_layer,
             n_head=self.n_head,
@@ -272,17 +276,19 @@ class UnifiedTransformer(Model):
 
         Args:
             enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
-            tgt_idx: the indices of prediction tokens, shape is [num_predictions].
+            tgt_idx (optional): the indices of prediction tokens, shape is [num_predictions, 2].
 
         Returns:
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
-        if tgt_idx is not None:
-            seq_feat = layers.gather_nd(input=enc_out, index=tgt_idx)
-        else:
+        if tgt_idx is None:
             enc_out = layers.reshape(
                 x=enc_out, shape=[-1, self.hidden_size])
             seq_feat = enc_out
+        elif len(tgt_idx.shape) == 2 and tgt_idx.shape[1] == 2:
+            seq_feat = layers.gather_nd(input=enc_out, index=tgt_idx)
+        else:
+            raise ValueError(f"Invalid indices shape {tgt_idx.shape} is used")
 
         seq_trans_feat = layers.fc(
             input=seq_feat,

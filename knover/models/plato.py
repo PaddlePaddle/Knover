@@ -93,7 +93,7 @@ class Plato(UnifiedTransformer):
 
             if self.use_bow:
                 feed_dict["bow_label"] = layers.data(name="bow_label", shape=[-1, 1], dtype="int64")
-                feed_dict["bow_idx"] = layers.data(name="bow_idx", shape=[-1, 1], dtype="int64")
+                feed_dict["bow_idx"] = layers.data(name="bow_idx", shape=[-1, 2], dtype="int64")
 
         return feed_dict
 
@@ -210,16 +210,17 @@ class Plato(UnifiedTransformer):
 
         Args:
             enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
-            bow_idx: the indices of prediction tokens, shape is [num_predictions].
+            bow_idx: the indices of prediction tokens, shape is [num_predictions, 1] or [num_predictions, 2].
 
         Returns:
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
-        bow_feat = layers.slice(
-            input=enc_out, axes=[1], starts=[0], ends=[1])
-        bow_feat = layers.reshape(
-            x=bow_feat, shape=[-1, self.hidden_size])
-        bow_feat = layers.gather(input=bow_feat, index=bow_idx)
+        if len(bow_idx.shape) == 2 and bow_idx.shape[1] == 1:
+            bow_feat = layers.gather(input=enc_out, index=bow_idx)
+        elif len(bow_idx.shape) == 2 and bow_idx.shape[1] == 2:
+            bow_feat = layers.gather_nd(input=enc_out, index=bow_idx)
+        else:
+            raise ValueError(f"Invalid indices shape {bow_idx.shape} is used")
 
         bow_trans_feat = layers.fc(
             input=bow_feat,

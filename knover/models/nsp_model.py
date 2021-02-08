@@ -54,7 +54,7 @@ class NSPModel(UnifiedTransformer):
 
         feed_dict["attention_mask"] = layers.data(
             name="attention_mask", shape=[-1, self.max_seq_len, self.max_seq_len], dtype=self.dtype)
-        feed_dict["label_idx"] = layers.data(name="label_idx", shape=[-1, 1], dtype="int64")
+        feed_dict["label_idx"] = layers.data(name="label_idx", shape=[-1, 2], dtype="int64")
 
         if not is_infer:
             feed_dict["label"] = layers.data(name="label", shape=[-1, 1], dtype="int64")

@@ -68,7 +68,7 @@ class Model(ABC):
                            help="Whether to use recompute for saving memory.")
         group.add_argument("--use_amp", type=str2bool, default=False,
                            help="Whether to use automatic mixed precision(AMP) training")
-        group.add_argument("--amp_loss_scaling", type=float, default=12800,
+        group.add_argument("--amp_loss_scaling", type=float, default=32768.,
                            help="The initial loss scaling of AMP.")
 
         return group
@@ -121,7 +121,7 @@ class Model(ABC):
         dist_strategy.fuse_all_reduce_ops = True
         if self.use_recompute:
             dist_strategy.forward_recompute = True
-            dist_strategy.enable_sequential_execution=True
+            dist_strategy.enable_sequential_execution = True
         if self.use_amp:
             dist_strategy.use_amp = True
             dist_strategy.amp_loss_scaling = self.amp_loss_scaling

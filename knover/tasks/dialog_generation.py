@@ -64,7 +64,7 @@ class DialogGeneration(Task):
             self.reader = DialogReader(args)
 
         if args.nsp_inference_model_path:
-            self.nsp_predictor = create_predictor(args.nsp_inference_model_path, args.is_distributed)
+            self.nsp_predictor = create_predictor(args.nsp_inference_model_path, args.get("is_distributed", False))
         else:
             self.nsp_predictor = None
 

@@ -517,7 +517,7 @@ class DialogReader(object):
 
         if is_infer:
             tgt_ids = np.array([[[self.bos_id]]] * len(batch_token_ids), dtype="int64")
-            if self.continuous_position:
+            if self.position_style == "continuous":
                 tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
             else:
                 tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")

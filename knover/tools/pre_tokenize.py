@@ -15,6 +15,8 @@
 
 import argparse
 
+from tqdm import tqdm
+
 from knover.utils import parse_args
 from knover.utils import SentencePieceTokenizer
 
@@ -34,13 +36,24 @@ def setup_args():
 def main(args):
     """Tokenization main process."""
     tokenizer = SentencePieceTokenizer(args)
+    tokenized_fields = ["src", "tgt"]
     with open(args.input_file) as fp, open(args.output_file, "w") as output_fp:
-        next(fp)
-        output_fp.write("src\ttgt\n")
-        for line in fp:
-            src, tgt = line.strip().split("\t")
-            src = " [SEP] ".join([" ".join(tokenizer.tokenize(s)) for s in src.split(" [SEP] ")])
-            output_fp.write(src + "\t" + " ".join(tokenizer.tokenize(tgt)) + "\n")
+        headers = next(fp).rstrip("\n").split("\t")
+        output_fp.write("\t".join(headers) + "\n")
+        for line in tqdm(fp, desc="Tokenizing"):
+            cols = line.rstrip("\n").split("\t")
+            assert len(cols) == len(headers)
+            for i, (name, field) in enumerate(zip(headers, cols)):
+                if name in tokenized_fields:
+                    utts = field.split(" [SEP] ")
+                    for j, utt in enumerate(utts):
+                        if "\1" in utt:
+                            utt, role_id = utt.split("\1")
+                            utts[j] = " ".join(tokenizer.tokenize(utt)) + "\1" + role_id
+                        else:
+                            utts[j] = " ".join(tokenizer.tokenize(utt))
+                    cols[i] = " [SEP] ".join(utts)
+            output_fp.write("\t".join(cols) + "\n")
 
 
 if __name__ == "__main__":

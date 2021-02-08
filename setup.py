@@ -24,7 +24,7 @@ if __name__ == "__main__":
     print(setuptools.find_packages())
     setuptools.setup(
         name="knover",
-        version="0.0.1",
+        version="0.0.2",
         description="Large-scale open domain KNOwledge grounded conVERsation system based on PaddlePaddle",
         long_description=readme,
         long_description_content_type="text/markdown",
@@ -40,6 +40,7 @@ if __name__ == "__main__":
             "paddlepaddle-gpu>=1.8.0,<2.0.0",
             "numpy",
             "sentencepiece",
-            "termcolor"
+            "termcolor",
+            "tqdm"
         ]
     )

@@ -26,7 +26,7 @@ from knover.utils.inference_utils import create_predictor
 
 @register_task("DialogGeneration")
 class DialogGeneration(Task):
-    """Define dialogue response generation."""
+    """Define dialogue response generation task."""
 
     @classmethod
     def add_cmdline_args(cls, parser):

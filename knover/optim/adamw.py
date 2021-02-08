@@ -19,12 +19,15 @@ import paddle.fluid as fluid
 import paddle.fluid.layers as layers
 
 
+VAR_NAME_TO_EXCLUDE = ".*layer_norm_scale|.*layer_norm_bias|.*b_0"
+
+
 class AdamW(fluid.optimizer.AdamOptimizer):
     """AdamW optimizer"""
 
     def __init__(self, *args, **kwargs):
-        weight_decay = kwargs.pop("weight_decay", None) 
-        var_name_to_exclude = kwargs.pop("var_name_to_exclude", ".*layer_norm_scale|.*layer_norm_bias|.*b_0")
+        weight_decay = kwargs.pop("weight_decay", None)
+        var_name_to_exclude = kwargs.pop("var_name_to_exclude", VAR_NAME_TO_EXCLUDE)
         super(AdamW, self).__init__(*args, **kwargs)
         self.wd = weight_decay
         self.pat = re.compile(var_name_to_exclude)

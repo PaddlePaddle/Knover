@@ -39,11 +39,11 @@ def setup_args():
                         help="The path where to save models.")
     parser.add_argument("--train_file", type=str, required=True,
                         help="The training dataset: file / filelist. "
-                        "See more details in `README.md`: `file_format`.")
+                        "See more details in `docs/usage.md`: `file_format`.")
     parser.add_argument("--valid_file", type=str, required=True,
                         help="The validation datasets: files / filelists. "
                         "The files / filelists are separated by `,`. "
-                        "See more details in `README.md`: `file_format`.")
+                        "See more details in `docs/usage.md`: `file_format`.")
 
     parser.add_argument("--start_step", type=int, default=0,
                         help="The start step of training. It will be updated if you load from a checkpoint.")

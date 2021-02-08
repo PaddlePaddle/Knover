@@ -15,6 +15,8 @@
 
 import argparse
 
+from tqdm import tqdm
+
 from knover.data.dialog_reader import DialogReader
 from knover.utils import parse_args
 
@@ -36,7 +38,7 @@ def main(args):
     reader = DialogReader(args)
     generator = reader._read_file(args.input_file, phase="numericalize", is_infer=False)
     with open(args.output_file, "w") as fp:
-        for record in generator():
+        for record in tqdm(generator(), desc="Numericalizing"):
             cols = [" ".join(map(str, getattr(record, field_name)))
                     for field_name in record._fields
                     if isinstance(getattr(record, field_name), list)]

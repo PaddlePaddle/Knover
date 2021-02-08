@@ -50,6 +50,7 @@ python -m \
     --config_path ${config_path} \
     --output_name ${output_name} \
     ${infer_args:-} \
+    --in_tokens ${in_tokens:-"false"} \
     --batch_size ${batch_size:-1} \
     --save_path ${save_path}
 exit_code=$?

@@ -39,6 +39,17 @@ class DialogReader(object):
                            help="The maximum length of target sequence (response in dialogue generation task).")
         group.add_argument("--max_seq_len", type=int, default=256,
                            help="The maximum length of sequence.")
+        group.add_argument("--max_knowledge_len", type=int, default=0,
+                           help="The maximum length of knowledge sequence.")
+        group.add_argument("--knowledge_position", type=str, default="post_src",
+                           choices=["post_src", "pre_src"],
+                           help="How to concatenate source sequence and knowledge sequence. "
+                           "`post_src` means concatenate knowledge sequence after source sequence, "
+                           "and `pre_src` means concatenate knowledge sequence before source sequence.")
+        group.add_argument("--knowledge_style", type=str, default="original",
+                           choices=["original", "reversed"],
+                           help="How to concatenate multipe knowledges. `original` concatenate knowledges in "
+                           "original order, and `reversed` means concatenate knowledges in reversed order.")
         group.add_argument("--truncate_first_turn", type=str2bool, default=False,
                            help="Whether truncate the first turn.")
         group.add_argument("--file_format", type=str, default="file",
@@ -83,6 +94,9 @@ class DialogReader(object):
         self.vocab_size = args.get("vocab_size", 0)
         self.max_src_len = args.max_src_len
         self.max_tgt_len = args.max_tgt_len
+        self.max_knowledge_len = args.max_knowledge_len
+        self.knowledge_position = args.knowledge_position
+        self.knowledge_style = args.knowledge_style
         self.truncate_first_turn = args.truncate_first_turn
         self.file_format = args.file_format
         self.data_format = args.data_format
@@ -98,8 +112,8 @@ class DialogReader(object):
             raise ValueError(f"Cannot set `shuffle_pool_size = {self.shuffle_pool_size}`"
                              f" and `sort_pool_size = ${self.sort_pool_size}` both positive.")
 
-        assert args.max_src_len + args.max_tgt_len <= args.max_seq_len, \
-            "args.max_src_len + args.max_tgt_len > args.max_seq_len"
+        assert args.max_knowledge_len + args.max_src_len + args.max_tgt_len <= args.max_seq_len, \
+            "args.max_knowledge_len + args.max_src_len + args.max_tgt_len > args.max_seq_len"
 
         # random_seed must be set for data slicing when using multi-gpu
         self.global_rng = np.random.RandomState(args.random_seed)
@@ -110,7 +124,11 @@ class DialogReader(object):
         self.num_examples = 0
 
         # model related
+        self.use_role = args.use_role
+
         self.fields = ["token_ids", "type_ids", "pos_ids"]
+        if args.use_role:
+            self.fields.append("role_ids")
         self.num_numerical_fields = len(self.fields)
         self.fields += ["tgt_start_idx", "data_id"]
         self.sort_key = lambda record: [len(record.token_ids)]
@@ -130,11 +148,18 @@ class DialogReader(object):
         # process src
         src_token_ids = []
         src_pos_ids = []
+        if self.use_role:
+            src_role_ids = []
+            role_id_list = []
 
         # tokenize src
         s_token_ids_list = []
         for s in src.split("[SEP]"):
             s = s.strip()
+            if self.use_role:
+                s, role_id = s.split("\1")
+                role_id = int(role_id)
+                role_id_list.append(role_id)
 
             if self.data_format == "tokenized":
                 s_tokens = s.split(" ")
@@ -161,22 +186,66 @@ class DialogReader(object):
         for i, s_token_ids in enumerate(s_token_ids_list[idx + 1:], idx + 1):
             src_token_ids += s_token_ids
             src_pos_ids += list(range(1, len(s_token_ids) + 1))
+            if self.use_role:
+                src_role_ids += [role_id_list[i]] * len(s_token_ids)
 
         field_values = {
             "token_ids": [self.bos_id] + src_token_ids,
             "type_ids": [0] * (len(src_token_ids) + 1),
             "pos_ids": [0] + src_pos_ids
         }
+        if self.use_role:
+            field_values["role_ids"] = [0] + src_role_ids
 
         for k in field_values:
             assert len(field_values[k]) == len(field_values["token_ids"]), \
                 f"len(field_values[{k}]) != len(field_values['token_ids'])"
         return field_values
 
+    def _parse_knowledge(self, knowledge):
+        """Parse knowledge sequence and return corresponding fields."""
+        ks_token_ids = [self.bos_id]
+        ks_pos_ids = [0]
+        if self.knowledge_style == "original":
+            ks = knowledge.split("[SEP]")
+        elif self.knowledge_style == "reversed":
+            ks = reversed(knowledge.split("[SEP]"))
+        for k in ks:
+            k = k.strip()
+            if self.data_format == "tokenized":
+                k_tokens = k.split(" ")
+            else:
+                k_tokens = self.tokenizer.tokenize(k)
+
+            k_token_ids = self.tokenizer.convert_tokens_to_ids(k_tokens) + [self.eos_id]
+            ks_token_ids += k_token_ids
+            ks_pos_ids += list(range(1, len(k_token_ids) + 1))
+
+        if len(ks_token_ids) > self.max_knowledge_len:
+            if self.knowledge_style == "original":
+                ks_token_ids = ks_token_ids[:self.max_knowledge_len]
+                ks_pos_ids = ks_pos_ids[:self.max_knowledge_len]
+            else:
+                ks_token_ids = ks_token_ids[-self.max_knowledge_len:]
+                ks_pos_ids = ks_pos_ids[-self.max_knowledge_len:]
+
+        field_values = {
+            "token_ids": ks_token_ids,
+            "type_ids": [2] * len(ks_token_ids),
+            "pos_ids": ks_pos_ids
+        }
+        if self.use_role:
+            field_values["role_ids"] = [0] * len(ks_token_ids)
+
+        return field_values
+
     def _parse_tgt(self, tgt):
         """Parse target sequence and return corresponding fields."""
         # process tgt
         tgt = tgt.strip()
+        if self.use_role:
+            tgt, role_id = tgt.split("\1")
+            role_id = int(role_id)
         if self.data_format == "tokenized":
             tgt_tokens = tgt.split(" ")
         else:
@@ -195,12 +264,28 @@ class DialogReader(object):
             "type_ids": [1] * len(tgt_token_ids),
             "pos_ids": list(range(len(tgt_token_ids)))
         }
+        if self.use_role:
+            field_values["role_ids"] = [role_id] * len(tgt_token_ids)
 
         return field_values
 
     def _convert_example_to_record(self, example, is_infer):
         """Convert an example to a record which can be used as the model's input."""
         field_values = self._parse_src(example.src)
+
+        if self.max_knowledge_len > 0:
+            # add knowledge
+            knowledge_field_values = self._parse_knowledge(example.knowledge)
+            if self.knowledge_position == "pre_src":
+                field_values = {
+                    k: knowledge_field_values[k] + field_values[k]
+                    for k in field_values
+                }
+            else:
+                field_values = {
+                    k: field_values[k] + knowledge_field_values[k]
+                    for k in field_values
+                }
 
         tgt_start_idx = len(field_values["token_ids"])
 
@@ -506,9 +591,13 @@ class DialogReader(object):
         batch_token_ids = [record.token_ids for record in batch_records]
         batch_type_ids = [record.type_ids for record in batch_records]
         batch_pos_ids = [record.pos_ids for record in batch_records]
+        if self.use_role:
+            batch_role_ids = [record.role_ids for record in batch_records]
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
         batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
         batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
+        if self.use_role:
+            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch["generation_mask"] = self._gen_self_attn_mask(

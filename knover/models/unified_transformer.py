@@ -36,6 +36,8 @@ class UnifiedTransformer(Model):
                            help="Whether to share the token embedding with the output FC.")
         group.add_argument("--mem_efficient", type=str2bool, default=False,
                            help="Whether to run in memory efficient mode.")
+        group.add_argument("--use_role", type=str2bool, default=False,
+                           help="Whether use role embeddings.")
 
         Generator.add_cmdline_args(parser)
         return group
@@ -80,6 +82,11 @@ class UnifiedTransformer(Model):
 
         self.dtype = "float32"
 
+        # role embeddings
+        self.use_role = args.use_role
+        if self.use_role:
+            self.role_type_size = args.role_type_size
+            self.role_emb_name = "role_embedding"
 
         # Initialize all weigths by truncated normal initializer, and all biases
         # will be initialized by constant zero by default.
@@ -96,6 +103,7 @@ class UnifiedTransformer(Model):
                    token_ids,
                    type_ids,
                    pos_ids,
+                   role_ids,
                    input_mask,
                    aux_emb=None):
         """Generate input embeddings of Transformer
@@ -130,6 +138,15 @@ class UnifiedTransformer(Model):
             param_attr=fluid.ParamAttr(
                 name=self.pos_emb_name, initializer=self.param_initializer))
         emb_out = token_emb_out + type_emb_out + pos_emb_out
+
+        if self.use_role:
+            role_emb_out = layers.embedding(
+                input=role_ids,
+                size=[self.role_type_size, self.emb_size],
+                dtype=self.dtype,
+                param_attr=fluid.ParamAttr(
+                    name=self.role_emb_name, initializer=self.param_initializer))
+            emb_out = emb_out + role_emb_out
 
         # concat auxiliary memory embeddings
         if aux_emb is not None:
@@ -211,6 +228,7 @@ class UnifiedTransformer(Model):
                             token_ids,
                             type_ids,
                             pos_ids,
+                            role_ids,
                             generation_mask,
                             aux_emb=None,
                             gather_idx=None):
@@ -229,7 +247,7 @@ class UnifiedTransformer(Model):
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
         emb_out, n_head_self_attn_mask = self._gen_input(
-            token_ids, type_ids, pos_ids, generation_mask, aux_emb=aux_emb)
+            token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
         return self._encode(
             emb_out, n_head_self_attn_mask, self.generation_caches,
             gather_idx=gather_idx)
@@ -339,6 +357,8 @@ class UnifiedTransformer(Model):
         feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
 
+        if self.use_role:
+            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["generation_mask"] = layers.data(
             name="generation_mask",
             shape=[-1, self.max_seq_len, self.max_seq_len],
@@ -387,6 +407,7 @@ class UnifiedTransformer(Model):
             token_ids=inputs["token_ids"],
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
+            role_ids=inputs.get("role_ids", None),
             generation_mask=inputs["generation_mask"],
             gather_idx=inputs.get("parent_idx", None)
         )

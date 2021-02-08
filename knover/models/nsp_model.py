@@ -52,6 +52,8 @@ class NSPModel(UnifiedTransformer):
         feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
 
+        if self.use_role:
+            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["attention_mask"] = layers.data(
             name="attention_mask", shape=[-1, self.max_seq_len, self.max_seq_len], dtype=self.dtype)
         feed_dict["label_idx"] = layers.data(name="label_idx", shape=[-1, 2], dtype="int64")
@@ -72,6 +74,7 @@ class NSPModel(UnifiedTransformer):
             token_ids=inputs["token_ids"],
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
+            role_ids=inputs.get("role_ids", None),
             generation_mask=inputs["attention_mask"]
         )
         return outputs

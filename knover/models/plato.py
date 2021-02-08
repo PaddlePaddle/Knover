@@ -62,6 +62,8 @@ class Plato(UnifiedTransformer):
         feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
         feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+        if self.use_role:
+            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
 
         if not is_infer:
             feed_dict["recognition_mask"] = layers.data(
@@ -101,6 +103,7 @@ class Plato(UnifiedTransformer):
                              token_ids,
                              type_ids,
                              pos_ids,
+                             role_ids,
                              input_mask):
         """Run recognition network.
 
@@ -123,7 +126,7 @@ class Plato(UnifiedTransformer):
             param_attr=fluid.ParamAttr(
                 name=self.token_emb_name, initializer=self.param_initializer))
         emb_out, n_head_self_attn_mask = self._gen_input(
-            token_ids, type_ids, pos_ids, input_mask, aux_emb=mask_emb)
+            token_ids, type_ids, pos_ids, role_ids, input_mask, aux_emb=mask_emb)
 
         recognition_out, checkpoints = self._encode(emb_out, n_head_self_attn_mask)
         return recognition_out, checkpoints
@@ -181,6 +184,7 @@ class Plato(UnifiedTransformer):
                 token_ids=inputs["token_ids"],
                 type_ids=inputs["type_ids"],
                 pos_ids=inputs["pos_ids"],
+                role_ids=inputs.get("role_ids", None),
                 input_mask=inputs["recognition_mask"],
             )
             logits = self._calc_recognition_logits(recognition_out)
@@ -194,6 +198,7 @@ class Plato(UnifiedTransformer):
             token_ids=inputs["token_ids"],
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
+            role_ids=inputs.get("role_ids", None),
             generation_mask=inputs["generation_mask"],
             aux_emb=layers.unsqueeze(latent_emb, axes=[1]),
             gather_idx=inputs.get("parent_idx", None),

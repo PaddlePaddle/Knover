@@ -76,6 +76,7 @@ def infer(args):
     timer = Timer()
     timer.start()
     infer_out = {}
+    step = 0
     for step, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
         for pred in predictions:

@@ -38,6 +38,8 @@ class DialogGeneration(Task):
         group.add_argument("--is_cn", type=str2bool, default=False,
                            help="Whether to run in Chinese data.")
 
+        group.add_argument("--filter_cross_repetition", type=str2bool, default=True)
+
         group.add_argument("--nsp_inference_model_path", type=str, default=None,
                            help="The path of NSP inference model which is used to provide the NSP ranking scores.")
 
@@ -55,6 +57,7 @@ class DialogGeneration(Task):
         super(DialogGeneration, self).__init__(args)
         self.do_generation = args.do_generation
         self.is_cn = args.is_cn
+        self.filter_cross_repetition = args.filter_cross_repetition
 
         # reserve example for inference
         args.reserve_example = True
@@ -97,7 +100,12 @@ class DialogGeneration(Task):
             preds = group[data_id]
             for pred in preds:
                 # TODO: fix tokenized input
-                words = [self.reader.tokenizer.preprocess(s).split(" ") for s in example.src.split("[SEP]")]
+                if self.reader.use_role:
+                    words = [self.reader.tokenizer.preprocess(s.split("\1")[0]).split(" ")
+                             for s in example.src.split("[SEP]")]
+                else:
+                    words = [self.reader.tokenizer.preprocess(s).split(" ")
+                             for s in example.src.split("[SEP]")]
                 pred_token_ids, pred_words = post_process_response(pred["response_token_ids"], self.reader)
                 num_token = len(pred_token_ids)
 
@@ -110,7 +118,7 @@ class DialogGeneration(Task):
                 pred["score"] = pred[self.ranking_score]
                 if self.max_dec_len is not None and num_token >= self.max_dec_len: # not ending
                     pred["score"] -= 1e3
-                elif cross_turn_repetition:
+                elif cross_turn_repetition and self.filter_cross_repetition:
                     pred["score"] -= 1e3
                 elif in_turn_repetition:
                     pred["score"] -= 1e3
@@ -120,6 +128,9 @@ class DialogGeneration(Task):
                 print("Example:", example.data_id)
                 print("Context:")
                 for s in example.src.split(" [SEP] "):
+                    if self.reader.use_role:
+                        s, role_id = s.split("\1")
+                        s = f"{role_id}: {s}"
                     print("\t" + s)
                 if "knowledge" in example._fields:
                     print("Knowledge:")
@@ -347,21 +358,34 @@ def get_nsp_score_batch(nsp_predictor, predictions):
         if args.latent_type_size:
             args.batch_size *= args.latent_type_size
     args.tokenized_input = True
+    # TODO: check knowledge
+    args.max_knowledge_len = 0
     args.use_mlm = False
     reader = NSPReader(args)
 
     def __reader__():
-        headers = ["src", "tgt", "data_id"]
+        headers = ["src", "knowledge", "tgt", "data_id"]
 
         Example = namedtuple("Example", headers)
 
         for i, pred in enumerate(predictions):
-            context = post_process_context(pred["context_token_ids"], reader, merge=False)
+            # TODO: support knowledge field.
+            try:
+                ks_bos_idx = pred["context_token_ids"].index(reader.bos_id, 1)
+                ctx_token_ids = pred["context_token_ids"][:ks_bos_idx]
+                ks_token_ids = pred["context_token_ids"][ks_bos_idx:]
+            except ValueError:
+                ctx_token_ids = pred["context_token_ids"]
+                ks_token_ids = []
+            context = post_process_context(ctx_token_ids, reader, merge=False)
+            knowledge = post_process_context(ks_token_ids, reader, merge=False)
             ctx_tokenized_input = " [SEP] ".join(" ".join(utt) for utt in context)
+            ks_tokenized_input = " [SEP] ".join(" ".join(k) for k in knowledge)
             _, response = post_process_response(pred["response_token_ids"], reader, merge=False)
             response_tokenized_input = " ".join(response)
             example = Example(
                 src=ctx_tokenized_input,
+                knowledge=ks_tokenized_input,
                 tgt=response_tokenized_input,
                 data_id=i
             )

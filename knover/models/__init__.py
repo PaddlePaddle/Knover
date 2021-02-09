@@ -65,5 +65,6 @@ def add_cmdline_args(parser):
     return group
 
 
+import knover.models.classifier
 import knover.models.nsp_model
 import knover.models.plato

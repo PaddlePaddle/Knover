@@ -57,5 +57,6 @@ def add_cmdline_args(parser):
     return group
 
 
+import knover.tasks.classification
 import knover.tasks.dialog_generation
 import knover.tasks.next_sentence_prediction

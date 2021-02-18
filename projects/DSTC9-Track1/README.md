@@ -12,7 +12,7 @@ The Track-1 of DSTC9 aims to effectively answer user requests or questions durin
 
 ## Download Dataset and Models
 
-[Dataset](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/data.tar) (this dataset is provided by [DSTC9-Track1](https://github.com/alexa/alexa-with-dstc9-track1-dataset)) contains:
+[Dataset](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/data.tar) (the dataset is provided by [DSTC9-Track1](https://github.com/alexa/alexa-with-dstc9-track1-dataset) and the schema description is provided by [MultiWOW 2.2](https://github.com/budzianowski/multiwoz)) contains:
 
 * Dialogue logs and labels: `${DATASET_TYPE}_logs.json` and `${DATASET_TYPE}_labels.json`
 * External knowledge base: `${DATASET_TYPE}_knowledge.json`
@@ -30,7 +30,7 @@ We also provide our models which are used in our submissions.
 
 
 ## Run Inference
-Here are the scripts used in our submission 0 and submissions 1. These scripts contain download commands and inference commands.
+Here are the scripts used in our submission 0 and submission 1. These scripts contain download commands and inference commands.
 
 ### Submission 0
 Use SOP-32L-Context in the knowledge-seeking turn detection task, SOP-32L-Selection in the knowledge selection task and SU-32L in the knowledge grounded generation task.

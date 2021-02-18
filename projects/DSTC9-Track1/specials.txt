@@ -1,0 +1,7 @@
+[SEP]
+[DOMAIN]
+[ENTITY]
+[TITLE]
+[BODY]
+[TYPE]
+[DESC]

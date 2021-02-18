@@ -21,9 +21,7 @@ from knover.utils.args import str2bool
 
 @register_task("NextSentencePrediction")
 class NextSentencePrediction(Task):
-    """
-    Define dialogue response generation.
-    """
+    """Define next sentence prediction task."""
 
     @classmethod
     def add_cmdline_args(cls, parser):

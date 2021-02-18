@@ -74,6 +74,7 @@ class Generator(object):
         self.vocab_size = args.vocab_size
 
         # model related
+        self.use_role = args.use_role
 
         # basic settings
         self.decoding_strategy = args.decoding_strategy
@@ -163,17 +164,29 @@ class Generator(object):
                     shape=[-1, 1, 1],
                     dtype=pre_ids.dtype)
 
-            pre_pos = layers.elementwise_mul(
-                x=layers.fill_constant_batch_size_like(
+            pre_pos = layers.elementwise_add(
+                layers.elementwise_mul(
+                    x=layers.fill_constant_batch_size_like(
+                        input=pre_mask,
+                        value=1,
+                        shape=[-1, 1, 1],
+                        dtype=pre_ids.dtype), y=step_idx, axis=0),
+                pos_bias, axis=0)
+
+            if self.use_role:
+                pre_role = layers.fill_constant_batch_size_like(
                     input=pre_mask,
-                    value=1,
+                    value=0,
                     shape=[-1, 1, 1],
-                    dtype=pre_ids.dtype), y=step_idx, axis=0) + pos_bias
+                    dtype=pre_ids.dtype)
+            else:
+                pre_role = None
 
             dec_out, _ = model._generation_network(
                 token_ids=pre_ids,
                 type_ids=pre_sent,
                 pos_ids=pre_pos,
+                role_ids=pre_role,
                 generation_mask=tmp_tgt_generation_mask,
                 gather_idx=parent_idx)
             logits = model._calc_logits(dec_out)

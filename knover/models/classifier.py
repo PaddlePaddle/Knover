@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""NSP model."""
+"""Classifier."""
 
 import paddle.fluid as fluid
 import paddle.fluid.layers as layers
@@ -22,21 +22,19 @@ from knover.models.unified_transformer import UnifiedTransformer
 from knover.utils import str2bool
 
 
-@register_model("NSPModel")
-class NSPModel(UnifiedTransformer):
-    """NSP model."""
+@register_model("Classifier")
+class Classifier(UnifiedTransformer):
+    """Classifier."""
 
     @classmethod
     def add_cmdline_args(cls, parser):
         """Add cmdline arguments."""
         group = UnifiedTransformer.add_cmdline_args(parser)
-        group.add_argument("--use_mlm", type=str2bool, default=True,
-                           help="Whether to train NSP model with MLM loss.")
         return group
 
     def __init__(self, args, place):
-        self.use_mlm = args.use_mlm
-        super(NSPModel, self).__init__(args, place)
+        self.num_classes = args.num_classes
+        super(Classifier, self).__init__(args, place)
 
     def _get_feed_dict(self, is_infer=False):
         """Get model's input feed dict.
@@ -54,14 +52,12 @@ class NSPModel(UnifiedTransformer):
 
         if self.use_role:
             feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+
         feed_dict["attention_mask"] = layers.data(
             name="attention_mask", shape=[-1, self.max_seq_len, self.max_seq_len], dtype=self.dtype)
-        feed_dict["label_idx"] = layers.data(name="label_idx", shape=[-1, 2], dtype="int64")
 
         if not is_infer:
             feed_dict["label"] = layers.data(name="label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
         else:
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         return feed_dict
@@ -82,36 +78,40 @@ class NSPModel(UnifiedTransformer):
     def get_metrics(self, inputs, outputs):
         """Get metrics."""
         metrics = {}
-        tgt_logits = self._calc_logits(outputs["enc_out"], inputs["tgt_idx"])
-        lm_loss = layers.softmax_with_cross_entropy(logits=tgt_logits, label=inputs["tgt_label"])
-        need_cal = layers.not_equal(
-            inputs["tgt_label"], layers.fill_constant(shape=[1], dtype="int64", value=1)
-        )
-        need_cal = layers.cast(need_cal, self.dtype)
-        mean_lm_loss = layers.reduce_sum(lm_loss * need_cal) / (layers.reduce_sum(need_cal) + 1e-10)
+        pooled_out = self._get_pooled_output(outputs["enc_out"])
+        cls_logits = self._get_classifier_output(pooled_out, num_classes=self.num_classes, name="cls")
+        cls_loss, cls_softmax = layers.softmax_with_cross_entropy(
+            logits=cls_logits, label=inputs["label"], return_softmax=True)
 
-        pooled_out = self._get_pooled_output(outputs["enc_out"], inputs["label_idx"])
-        nsp_logits = self._get_classifier_output(pooled_out, name="next_sent")
-        nsp_loss, nsp_softmax = layers.softmax_with_cross_entropy(
-            logits=nsp_logits, label=inputs["label"], return_softmax=True)
+        cls_acc = layers.accuracy(cls_softmax, inputs["label"])
+        mean_cls_loss = layers.mean(cls_loss)
 
-        nsp_acc = layers.accuracy(nsp_softmax, inputs["label"])
-        mean_nsp_loss = layers.mean(nsp_loss)
+        metrics["loss"] = mean_cls_loss
+        metrics["cls_loss"] = mean_cls_loss
+        metrics["cls_acc"] = cls_acc
 
-        loss = mean_nsp_loss
-        if self.use_mlm:
-            loss = loss + mean_lm_loss
-            metrics["token_lm_loss"] = mean_lm_loss
-        metrics["loss"] = loss
-        metrics["nsp_loss"] = mean_nsp_loss
-        metrics["nsp_acc"] = nsp_acc
+        # statistics for recall & precision & f1
+        if self.num_classes == 2:
+            pred = layers.argmax(cls_softmax, axis=1)
+            metrics["stat_tp"] = layers.reduce_sum(
+                layers.logical_and(pred == 1, inputs["label"] == 1).astype("float32")
+            )
+            metrics["stat_fp"] = layers.reduce_sum(
+                layers.logical_and(pred == 1, inputs["label"] == 0).astype("float32")
+            )
+            metrics["stat_tn"] = layers.reduce_sum(
+                layers.logical_and(pred == 0, inputs["label"] == 0).astype("float32")
+            )
+            metrics["stat_fn"] = layers.reduce_sum(
+                layers.logical_and(pred == 0, inputs["label"] == 1).astype("float32")
+            )
         return metrics
 
     def infer(self, inputs, outputs):
         """Run model inference."""
-        pooled_out = self._get_pooled_output(outputs["enc_out"], inputs["label_idx"])
-        nsp_logits = self._get_classifier_output(pooled_out, name="next_sent")
-        scores = layers.softmax(nsp_logits)
+        pooled_out = self._get_pooled_output(outputs["enc_out"])
+        cls_logits = self._get_classifier_output(pooled_out, num_classes=self.num_classes, name="cls")
+        scores = layers.softmax(cls_logits)
         predictions = {"scores": scores, "data_id": inputs["data_id"]}
         return predictions
 

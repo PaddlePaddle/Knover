@@ -15,6 +15,7 @@
 
 import collections
 import json
+import re
 import six
 import unicodedata
 
@@ -99,6 +100,7 @@ class SentencePieceTokenizer(object):
         """Add cmdline arguments."""
         group = parser.add_argument_group("Tokenizer")
         group.add_argument("--vocab_path", type=str, required=True)
+        group.add_argument("--specials_path", type=str, default="")
         group.add_argument("--do_lower_case", type=str2bool, default=False)
         group.add_argument("--spm_model_file", type=str, required=True)
         return group
@@ -109,6 +111,18 @@ class SentencePieceTokenizer(object):
         self.vocab = load_vocab(args.vocab_path)
         self.do_lower_case = args.do_lower_case
         self.inv_vocab = {v: k for k, v in self.vocab.items()}
+        pat_str = ""
+        if args.specials_path != "":
+            self.specials = load_vocab(args.specials_path)
+            for special in self.specials:
+                pat_str += "(" + re.escape(special) + ")|"
+        else:
+            self.specials = {}
+        pat_str += "([a-zA-Z0-9\S]+)"
+        self.pat = re.compile(pat_str)
+
+    # Speedup tokenization.
+    cached = {}
 
     def preprocess(self, text):
         text = preprocess_text(text, lower=self.do_lower_case)
@@ -117,7 +131,18 @@ class SentencePieceTokenizer(object):
     def tokenize(self, text):
         """Tokenizes a piece of text."""
         text = self.preprocess(text)
-        return encode_pieces(self.spm_model, text, return_unicode=True)
+        if text in self.cached:
+            return self.cached[text]
+        tokens = []
+        for match in self.pat.finditer(text):
+            part_text = match.group(0)
+            if part_text in self.specials:
+                tokens.append(part_text)
+                continue
+            part_tokens = encode_pieces(self.spm_model, part_text, return_unicode=True)
+            tokens.extend(part_tokens)
+        self.cached[text] = tokens
+        return tokens
 
     def convert_tokens_to_ids(self, tokens):
         """Convert tokens to ids."""
@@ -140,6 +165,8 @@ class SentencePieceTokenizer(object):
         for token in tokens:
             if token.startswith(u"▁"):
                 ret.append(token[1:])
+            elif token in self.specials:
+                ret.append(token)
             else:
                 if len(ret):
                     ret[-1] += token

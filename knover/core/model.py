@@ -13,26 +13,29 @@
 # limitations under the License.
 """Model base."""
 
-from abc import abstractmethod, ABC
+from abc import abstractmethod, ABC, ABCMeta
 import os
 
-import paddle.fluid as fluid
-from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
-import paddle.fluid.incubate.fleet.base.role_maker as role_maker
-import paddle.fluid.layers as layers
+import paddle
+from paddle.distributed import fleet
+import paddle.nn as nn
+from paddle.optimizer.lr import NoamDecay, LinearWarmup, PolynomialDecay
 
 import knover.optim
-import knover.optim.lr_scheduler as lr_scheduler
-from knover.utils import to_lodtensor, get_tensor
-from knover.utils.args import str2bool
+from knover.optim.lr_scheduler import CosineDecay
+from knover.utils import str2bool
 
 
-class Model(ABC):
-    """Basic model wrapper of PaddlePaddle.
+class ModelMeta(ABCMeta, type(nn.Layer)):
+    """Handle multiply inherit from ABC and paddle.nn.Layer."""
+    pass
+
+
+class Model(ABC, nn.Layer, metaclass=ModelMeta):
+    """Basic model wrapper in dygraph mode.
 
     Attributes:
         place: CPUPlace or CUDAPlace.
-        exe: A executor which is used in static graph mode.
     """
 
     @classmethod
@@ -64,167 +67,55 @@ class Model(ABC):
                            help="The maximum norm of gradient.")
 
         # training related
-        group.add_argument("--use_recompute", type=str2bool, default=False,
-                           help="Whether to use recompute for saving memory.")
         group.add_argument("--use_amp", type=str2bool, default=False,
                            help="Whether to use automatic mixed precision(AMP) training")
-        group.add_argument("--amp_loss_scaling", type=float, default=32768.,
-                           help="The initial loss scaling of AMP.")
 
         return group
 
     def __init__(self, args, place):
-        self.place = place
-        self.exe = fluid.Executor(place)
+        super(Model, self).__init__()
+        self._build_model(args)
 
-        self.init_checkpoint = args.init_checkpoint
-        self.init_pretraining_params = args.init_pretraining_params
+        self.place = place
+
+        # distributed settings
+        self.use_amp = args.use_amp
 
         # optimizer related
-        self.optimizer = args.optimizer
-        self.learning_rate = args.learning_rate
-        self.warmup_steps = args.warmup_steps
-        self.lr_scheduler = args.lr_scheduler
-        self.max_training_steps = args.max_training_steps
-        self.min_learning_rate = args.min_learning_rate
-        self.weight_decay = args.weight_decay
-        self.max_grad_norm = args.max_grad_norm
+        self.lr_scheduler = self._get_lr_scheduler(args)
+        self.optimizer = self._get_optimizer(args, self.lr_scheduler)
 
-        # training related
-        self.is_distributed = args.get("is_distributed", False)
-        self.use_recompute = args.use_recompute
-        self.use_amp = args.use_amp
-        self.amp_loss_scaling = args.amp_loss_scaling
-        if not self.is_distributed:
-            if self.use_recompute:
-                print("[WARM] Cannot support recomputation in non-distributed mode.")
-            if self.use_amp:
-                print("[WARM] Cannot support AMP in non-distributed mode.")
+        # initialize paramters
+        if args.init_checkpoint != "":
+            self.load(args.init_checkpoint, is_checkpoint=True)
+        elif args.init_pretraining_params != "":
+            self.load(args.init_pretraining_params)
 
-        # model mode
-        self.run_infer = args.get("run_infer", False)
-        self.batch_size = args.get("batch_size", 1)
-
-        self._build_programs()
         return
 
-    def _init_distributed_strategy(self):
-        """Initialize distributed strategy."""
-        exec_strategy = fluid.ExecutionStrategy()
-        exec_strategy.use_experimental_executor = True
-        exec_strategy.num_threads = 4
-        exec_strategy.num_iteration_per_drop_scope = 1
-
-        dist_strategy = DistributedStrategy()
-        dist_strategy.exec_strategy = exec_strategy
-        dist_strategy.nccl_comm_num = 1
-        dist_strategy.fuse_all_reduce_ops = True
-        if self.use_recompute:
-            dist_strategy.forward_recompute = True
-            dist_strategy.enable_sequential_execution = True
-        if self.use_amp:
-            dist_strategy.use_amp = True
-            dist_strategy.amp_loss_scaling = self.amp_loss_scaling
-        self.dist_strategy = dist_strategy
-        return
-
-    def _set_checkpoints(self, checkpoints):
-        """Set checkpoints for recompute.
-
-        Args:
-            checkpoints: A list of Variables which need to set as checkpoints.
-        """
-        self.dist_strategy.recompute_checkpoints = checkpoints
-        return
-
-    def _build_programs(self):
-        """Build programs.
-
-        Build training program, evaluation program and inference program. Only use in static graph mode.
-        """
-        self.startup_program = fluid.Program()
-        if self.run_infer:
-            # build inference program
-            self.infer_program = fluid.Program()
-            with fluid.program_guard(self.infer_program, self.startup_program):
-                with fluid.unique_name.guard():
-                    self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)
-                    predictions = self.infer(inputs, outputs)
-                    self.infer_fetch_dict = predictions
-            self.infer_program = self.infer_program.clone(for_test=True)
-
-            self.program = self.infer_program
-        else:
-            # initialize distributed setting
-            if self.is_distributed:
-                self._init_distributed_strategy()
-
-            # build training program
-            self.train_program = fluid.Program()
-            with fluid.program_guard(self.train_program, self.startup_program):
-                with fluid.unique_name.guard():
-                    self.feed_dict = inputs = self._get_feed_dict()
-                    outputs = self.forward(inputs)
-
-                    if self.is_distributed and self.use_recompute:
-                        self._set_checkpoints(outputs["checkpoints"])
-
-                    metrics = self.get_metrics(inputs, outputs)
-
-                    # build evaluation program
-                    self.eval_program = self.train_program.clone(for_test=True)
-                    self.eval_fetch_dict = dict(**metrics)
-
-                    scheduled_lr = self.optimize(metrics)
-                    metrics["scheduled_lr"] = scheduled_lr
-                    if self.is_distributed and self.use_amp:
-                        vars_ = fluid.default_main_program().global_block().vars
-                        loss_scaling = vars_["loss_scaling_0"]
-                        metrics["loss_scaling"] = loss_scaling
-                    self.train_fetch_dict = metrics
-
-            self.program = self.train_program
-            if self.is_distributed:
-                self.train_program = fleet.main_program
-
-        # initialize model
-        self.exe.run(self.startup_program)
-        if self.init_pretraining_params != "":
-            self.load(self.init_pretraining_params)
-        elif self.init_checkpoint != "":
-            self.load(self.init_checkpoint, is_checkpoint=True)
-        return
+    def _build_model(self, args):
+        """Build model."""
+        raise NotImplementedError
 
     def load(self, model_path, is_checkpoint=False):
-        """Load persistables or parameters.
+        """Load persistables or parameters from the given path.
 
         Args:
             model_path: The path of initial model.
             is_checkpoint: If true, load parameters and other variables (such as moments in Adam optimizer), otherwise load only parameters.
         """
-        # TODO: support dygraph.
-        print(f"Loading model from {model_path}.")
-        assert os.path.exists(model_path), f"[{model_path}] cann't be found."
-        def __predicate__(var):
-            if is_checkpoint and not fluid.io.is_persistable(var):
-                return False
-            if not is_checkpoint and not fluid.io.is_parameter(var):
-                return False
-            # only load existing variable.
-            return os.path.exists(os.path.join(model_path, var.name))
-        fluid.io.load_vars(
-            self.exe,
-            model_path,
-            main_program=self.program,
-            predicate=__predicate__)
+        params_path = model_path + ".pdparams"
+        assert os.path.exists(params_path), f"params_path: [{params_path}] cannot be found."
+        print(f"Loading parameters from {params_path}.")
+        params_state_dict = paddle.load(params_path)
+        self.set_state_dict(params_state_dict)
         if is_checkpoint:
-            print(f"Load model from checkpoint: {model_path}")
-            start_step = get_tensor("@LR_DECAY_COUNTER@")
-            if start_step is not None:
-                self.args.start_step = start_step[0]
-        else:
-            print(f"Load pretraining parameters from {model_path}")
+            opt_path = model_path + "pdopt"
+            assert os.path.exists(opt_path), f"opt_path: [{opt_path}] cannot be found."
+            print(f"Loading optimizer state from {opt_path}.")
+            opt_state_dict = paddle.load(model_path + "pdopt")
+            self.optimizer.set_state_dict(opt_state_dict)
+        print("Loading has done!")
         return
 
     def save(self, model_path, is_checkpoint=False):
@@ -234,31 +125,15 @@ class Model(ABC):
             model_path: The path where we save the model.
             is_checkpoint: If true, save parameters and other variables (such as moments in Adam optimizer), otherwise save only parameters.
         """
-        # TODO: support dygraph.
+        params_path = model_path + ".pdparams"
+        print(f"Saving parameters into {params_path}.")
+        paddle.save(self.state_dict(), params_path)
         if is_checkpoint:
-            fluid.io.save_persistables(self.exe, model_path, self.program)
-        else:
-            fluid.io.save_params(self.exe, model_path, self.program)
+            opt_path = model_path + ".pdopt"
+            print(f"Saving optimizer state into {opt_path}.")
+            paddle.save(self.optimizer.state_dict(), opt_path)
+        print("Saving has done!")
         return
-
-    def _get_feed(self, inputs):
-        """Convert inputs into model's input data format.
-
-        Convert hierarchical list into LoD Tensor, and keep numpy.ndarray.
-
-        Args:
-            inputs: A dict mapping keys to corresponding data. The data is either a hierarchical list or a numpy.ndarray.
-
-        Returns:
-            inputs: A dict mapping keys to corresponding model's data. The data is either a LoDTensor or a numpy.ndarray.
-        """
-        if isinstance(inputs, list):
-            # return list direclty which is used in `get_data_loader`.
-            return inputs
-        for k in inputs:
-            if isinstance(inputs[k], list):
-                inputs[k] = to_lodtensor(inputs[k], self.place)
-        return inputs
 
     def get_data_loader(self, generator=None, is_infer=False):
         """Get the DataLoader of the model.
@@ -270,36 +145,17 @@ class Model(ABC):
         Returns:
             loader: A DataLoader which is used to generate batch data.
         """
-        # TODO: support dygraph.
-        if is_infer:
-            feed_name_list, feed_list = zip(*self.infer_feed_dict.items())
-        else:
-            feed_name_list, feed_list = zip(*self.feed_dict.items())
-        loader = fluid.io.DataLoader.from_generator(
-            feed_list=feed_list,
-            capacity=64,
-            use_double_buffer=True,
-            iterable=True)
+        loader = paddle.io.DataLoader.from_generator(capacity=64, return_list=True)
         if generator is not None:
             def __wrapper__():
                 for batch in generator():
-                    batch = self._get_feed(batch)
-                    batch = [batch[name] for name in feed_name_list if name in batch]
-                    yield batch
-            loader.set_batch_generator(__wrapper__, self.place)
+                    if is_infer:
+                        self.infer_feed_names = list(batch.keys())
+                    else:
+                        self.feed_names = list(batch.keys())
+                    yield list(batch.values())
+            loader.set_batch_generator(__wrapper__, places=self.place)
         return loader
-
-    @abstractmethod
-    def _get_feed_dict(self, is_infer=False):
-        """Get model's input feed dict.
-
-        Args:
-            is_infer: If true, get inference input feed dict, otherwise get training / evaluation input feed dict.
-
-        Returns:
-            feed_dict: A feed dict mapping keys to feed input variable.
-        """
-        pass
 
     @abstractmethod
     def forward(self, inputs, is_infer=False):
@@ -358,69 +214,86 @@ class Model(ABC):
         Args:
             metrics: A dict mapping metric names to corresponding metrics, which must include loss.
         """
-        # TODO: support dygraph
-        # lr scheduler
-        if self.lr_scheduler == "noam" and self.warmup_steps <= 0:
+        metrics["loss"].backward()
+        self.lr_scheduler.step()
+        metrics["scheduled_lr"] = self.optimizer.get_lr()
+        self.optimizer.step()
+        self.optimizer.clear_grad()
+        return
+
+    def _get_lr_scheduler(self, args):
+        if args.lr_scheduler == "noam" and args.warmup_steps <= 0:
             print("[WARMING] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
-        if self.lr_scheduler == "noam" and self.warmup_steps > 0:
-            scheduled_lr = layers.learning_rate_scheduler.noam_decay(
-                1 / (self.warmup_steps * (self.learning_rate ** 2)),
-                self.warmup_steps)
-        elif self.lr_scheduler == "linear":
-            scheduled_lr = lr_scheduler.linear_warmup_and_linear_decay(
-                self.learning_rate,
-                self.min_learning_rate,
-                self.warmup_steps,
-                self.max_training_steps)
-        elif self.lr_scheduler == "cosine":
-            scheduled_lr = lr_scheduler.linear_warmup_and_cosine_decay(
-                self.learning_rate,
-                self.min_learning_rate,
-                self.warmup_steps,
-                self.max_training_steps)
+        if args.lr_scheduler == "noam" and args.warmup_steps > 0:
+            scheduler = NoamDecay(
+                1 / (args.warmup_steps * (args.learning_rate ** 2)),
+                args.warmup_steps)
+        elif args.lr_scheduler == "linear":
+            scheduler = PolynomialDecay(
+                args.learning_rate,
+                decay_steps=args.max_training_steps - args.warmup_steps,
+                end_lr=args.min_learning_rate,
+                power=1.0)
+            scheduler = LinearWarmup(
+                scheduler,
+                args.warmup_steps,
+                start_lr=0,
+                end_lr=args.learning_rate)
+        elif args.lr_scheduler == "cosine":
+            scheduler = CosineDecay(
+                args.learning_rate,
+                decay_steps=args.max_training_steps - args.warmup_steps,
+                end_lr=args.min_learning_rate)
+            scheduler = LinearWarmup(
+                scheduler,
+                args.warmup_steps,
+                start_lr=0,
+                end_lr=args.learning_rate)
         else: # constant
-            scheduled_lr = layers.create_global_var(
-                name=fluid.unique_name.generate("learning_rate"),
-                shape=[1],
-                value=self.learning_rate,
-                dtype="float32",
-                persistable=True)
-        # grad norm
-        if self.max_grad_norm > 0:
-            grad_clip = fluid.clip.GradientClipByGlobalNorm(self.max_grad_norm)
-        else:
-            grad_clip = None
+            scheduler = args.learning_rate
+        return scheduler
 
-        # optimizer
-        optimizer_cls = getattr(knover.optim, self.optimizer)
-        optimizer = optimizer_cls(
-            learning_rate=scheduled_lr,
-            grad_clip=grad_clip,
-            weight_decay=self.weight_decay)
-
-        # distributed optimizer
-        if self.is_distributed:
-            optimizer = fleet.distributed_optimizer(optimizer, strategy=self.dist_strategy)
-
-        optimizer.minimize(metrics["loss"])
-        return scheduled_lr
-
-    def _execute(self, program, inputs, fetch_dict, **kwargs):
-        """Execute program in static graph mode.
+    def _get_optimizer(self, args, lr_scheduler):
+        """Get the optimizer of model.
 
         Args:
-            program: The executable program.
-            inputs: A dict mapping variable names to corresponding input variables.
-            fetch_dict: A dict mapping variable names to corresponding output variables.
-            kwargs: Other arguments for executing program.
+            args: arguments.
+            lr_scheduler: learning rate scheduler
 
         Returns:
-            outputs: A dict mapping keys to output variables.
+            optimizer: the optimizer used in model training.
         """
-        feed = self._get_feed(inputs)
-        fetch_list = [var.name for var in fetch_dict.values()]
-        fetch_vars = self.exe.run(program, feed, fetch_list, **kwargs)
-        return dict(zip(fetch_dict.keys(), fetch_vars))
+        # optimizer
+        if not hasattr(knover.optim, args.optimizer):
+            raise ValueError(f"Unspported optimizer class: {args.optimizer}.")
+        optimizer_cls = getattr(knover.optim, args.optimizer)
+        optimizer = optimizer_cls(
+            lr_scheduler,
+            parameters=self.parameters(),
+            weight_decay=args.weight_decay,
+            grad_clip=nn.ClipGradByGlobalNorm(args.max_grad_norm))
+        return optimizer
+
+    def _get_inputs(self, inputs, is_infer=False):
+        """Wrapper of input data format in dygraph.
+
+        Convert a list of Tensors into a dictionary which maps names into Tensors.
+
+        Args:
+            inputs: A list of input Tensors.
+            is_infer: If true, get inference's feed dict, otherwise get training / evaluation 's feed dict.
+
+        Returns:
+            inputs: A dict mapping keys to corresponding Tensors.
+        """
+        if is_infer:
+            return dict(zip(self.infer_feed_names, inputs))
+        else:
+            return dict(zip(self.feed_names, inputs))
+
+    def _get_outputs(self, outputs):
+        """Wrapper of output data format in dygraph."""
+        return outputs
 
     def train_step(self, inputs):
         """Run one training step.
@@ -431,13 +304,14 @@ class Model(ABC):
         Returns:
             metrics: A dict mapping keys to corresponding metrics.
         """
-        # TODO: support dygraph.
-        return self._execute(
-            self.train_program,
-            inputs,
-            self.train_fetch_dict,
-            use_program_cache=True)
+        self.train()
+        with paddle.amp.auto_cast(self.use_amp):
+            inputs = self._get_inputs(inputs)
+            outputs = self.forward(inputs)
+            metrics = self.get_metrics(inputs, outputs)
+            return self._get_outputs(metrics)
 
+    @paddle.no_grad()
     def eval_step(self, inputs):
         """Run one evaluation step.
 
@@ -447,17 +321,15 @@ class Model(ABC):
         Returns:
             metrics: A dict mapping keys to corresponding metrics.
         """
-        # TODO: support dygraph.
-        outputs = self._execute(
-            self.eval_program,
-            inputs,
-            self.eval_fetch_dict)
-        if isinstance(inputs, list):
-            inputs = inputs[0]
+        self.eval()
+        inputs = self._get_inputs(inputs)
+        outputs = self.forward(inputs)
+        metrics = self.get_metrics(inputs, outputs)
         statistics = self.get_statistics(inputs, outputs)
-        outputs.update(statistics)
-        return outputs
+        metrics.update(statistics)
+        return self._get_outputs(metrics)
 
+    @paddle.no_grad()
     def infer_step(self, inputs):
         """Run one inference step.
 
@@ -467,11 +339,21 @@ class Model(ABC):
         Returns:
             predictions: A dict mapping keys to corresponding predictions.
         """
-        # TODO: support dygraph.
-        return self._execute(
-            self.infer_program,
-            inputs,
-            self.infer_fetch_dict)
+        self.eval()
+        inputs = self._get_inputs(inputs, is_infer=True)
+        outputs = self.forward(inputs, is_infer=True)
+        predictions = self.infer(inputs, outputs)
+        return self._get_outputs(predictions)
+
+    def __call__(self, inputs, mode="train"):
+        if mode == "train":
+            return self.train_step(inputs)
+        elif mode == "eval":
+            return self.eval_step(inputs)
+        elif mode == "infer":
+            return self.infer_step(inputs)
+        else:
+            raise ValueError(f"Unspported mode: {mode}.")
 
     def save_inference_model(self, inference_model_path):
         """Save the inference model.
@@ -481,13 +363,118 @@ class Model(ABC):
         Args:
             inference_model_path: The path of saved inference model.
         """
-        feed_list = [var.name for var in self.infer_feed_dict.values()]
-        fetch_list = list(self.infer_fetch_dict.values())
+        raise NotImplementedError("Cannot support save_inference_model now.")
 
-        fluid.io.save_inference_model(
-            inference_model_path,
-            feed_list,
-            fetch_list,
-            self.exe,
-            self.infer_program,
-            program_only=True)
+
+class ModelInterface(object):
+    """The model inference."""
+
+    def __init__(self, args, model):
+        assert isinstance(model, Model), "The model must be an instance of Model"
+        self.model = model
+        self.is_distributed = args.is_distributed
+        if args.is_distributed:
+            # distributed settings for dygraph.
+            # now only support data parallel for dygraph.
+            self.model.optimizer = fleet.distributed_optimizer(self.model.optimizer)
+            self.dp_model = fleet.distributed_model(self.model)
+
+    def _get_outputs(self, outputs):
+        """Convert Tensors into numpy arrays.
+
+        Args:
+            outputs: A dict mapping keys to output Tensors.
+
+        Returns:
+            outputs: A dict mapping keys to numpy arrays.
+        """
+        if isinstance(outputs, dict):
+            return {k: v.numpy() if isinstance(v, paddle.Tensor) else v
+                    for k, v in outputs.items()}
+        return outputs
+
+    def train_step(self, inputs):
+        """Run one training step.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            metrics: A dict mapping keys to corresponding metrics.
+        """
+        if self.is_distributed:
+            metrics = self.dp_model(inputs, mode="train")
+        else:
+            metrics = self.model(inputs, mode="train")
+        self.model.optimize(metrics)
+        return self._get_outputs(metrics)
+
+    def eval_step(self, inputs):
+        """Run one evaluation step.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            metrics: A dict mapping keys to corresponding metrics (numpy arrays).
+        """
+        if self.is_distributed:
+            metrics = self.dp_model(inputs, mode="eval")
+        else:
+            metrics = self.model(inputs, mode="eval")
+        return self._get_outputs(metrics)
+
+    def infer_step(self, inputs):
+        """Run one inference step.
+
+        Args:
+            inputs: A dict mapping keys to corresponding input data.
+
+        Returns:
+            predictions: A dict mapping keys to corresponding predictions (numpy arrays).
+        """
+        if self.is_distributed:
+            predictions = self.dp_model(inputs, mode="infer")
+        else:
+            predictions = self.model(inputs, mode="infer")
+        return self._get_outputs(predictions)
+
+    def get_data_loader(self, generator=None, is_infer=False):
+        """Get the DataLoader of the model.
+
+        Args:
+            generator: If generator is not `None`, the DataLoader sets it as the batch generator.
+            is_infer: If true, get inference's DataLoader, otherwise get training / evaluation 's DataLoader.
+
+        Returns:
+            loader: A DataLoader which is used to generate batch data.
+        """
+        return self.model.get_data_loader(generator, is_infer)
+
+    def save(self, model_path, is_checkpoint=False):
+        """Save persistables or parameters into the given path.
+
+        Args:
+            model_path: The path where we save the model.
+            is_checkpoint: If true, save parameters and other variables (such as moments in Adam optimizer), otherwise save only parameters.
+        """
+        self.model.save(model_path, is_checkpoint)
+
+    def load(self, model_path, is_checkpoint=False):
+        """Load persistables or parameters from the given path.
+
+        Args:
+            model_path: The path of initial model.
+            is_checkpoint: If true, load parameters and other variables (such as moments in Adam optimizer), otherwise load only parameters.
+        """
+        self.model.load(model_path, is_checkpoint)
+
+    def save_inference_model(self, inference_model_path):
+        """Save the inference model.
+
+        Only save the inference program.
+
+        Args:
+            inference_model_path: The path of saved inference model.
+        """
+        raise NotImplementedError("Cannot support save_inference_model now.")

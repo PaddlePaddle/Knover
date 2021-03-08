@@ -13,7 +13,9 @@
 # limitations under the License.
 """Define model."""
 
-from knover.core.model import Model
+import paddle
+
+from knover.core.model import Model, ModelInterface
 
 MODEL_REGISTRY = {}
 
@@ -40,9 +42,10 @@ def register_model(name):
     return __wrapped__
 
 
-def create_model(args, place) -> Model:
+def create_model(args, place) -> ModelInterface:
     """Create a model."""
-    return MODEL_REGISTRY[args.model](args, place)
+    model = MODEL_REGISTRY[args.model](args, place)
+    return ModelInterface(args, model)
 
 
 def add_cmdline_args(parser):
@@ -51,7 +54,8 @@ def add_cmdline_args(parser):
 
     # Model
     group.add_argument("--model", type=str, required=True,
-                       help="The model type.")
+                       help="The model type.",
+                       choices=list(MODEL_REGISTRY.keys()))
 
     # Config
     group.add_argument("--config_path", type=str, required=True,
@@ -65,6 +69,4 @@ def add_cmdline_args(parser):
     return group
 
 
-import knover.models.classifier
-import knover.models.nsp_model
-import knover.models.plato
+import knover.models.unified_transformer

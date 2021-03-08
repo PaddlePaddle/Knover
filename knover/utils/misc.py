@@ -13,10 +13,16 @@
 # limitations under the License.
 """Miscellaneous utility."""
 
+from contextlib import contextmanager
+import gzip
+import sys
 import time
+
+import paddle.fluid as fluid
 
 
 class Timer(object):
+    """Helpful timer."""
 
     def __init__(self):
         self._pass_time = 0
@@ -24,21 +30,39 @@ class Timer(object):
         return
 
     def start(self):
+        """Record start timestamp."""
         self._start_time = time.time()
 
     def pause(self):
+        """Cumulate pass time."""
         self._pass_time += time.time() - self._start_time
         self._start_time = None
 
     def reset(self):
+        """Reset pass time."""
         self._pass_time = 0
 
     @property
     def pass_time(self):
+        """Return pass time."""
         if self._start_time is None:
             return self._pass_time
         else:
             return self._pass_time + time.time() - self._start_time
+
+
+@contextmanager
+def open_file(filename):
+    """Construct a file handler.
+
+    The handler can read a normal file or a file compressed by `gzip`.
+    """
+    if filename.endswith(".gz"):
+        fp = gzip.open(filename, "rt")
+    else:
+        fp = open(filename)
+    yield fp
+    fp.close()
 
 
 ERROR_MESSAGE="\nYou can not set use_cuda = True in the model because you are using paddlepaddle-cpu.\n \

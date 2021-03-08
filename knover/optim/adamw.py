@@ -13,36 +13,20 @@
 # limitations under the License.
 """AdamW Optimizer."""
 
-import re
-
-import paddle.fluid as fluid
-import paddle.fluid.layers as layers
+from paddle.optimizer.adamw import AdamW as _AdamW
 
 
-VAR_NAME_TO_EXCLUDE = ".*layer_norm_scale|.*layer_norm_bias|.*b_0"
-
-
-class AdamW(fluid.optimizer.AdamOptimizer):
+class AdamW(_AdamW):
     """AdamW optimizer"""
 
-    def __init__(self, *args, **kwargs):
-        weight_decay = kwargs.pop("weight_decay", None)
-        var_name_to_exclude = kwargs.pop("var_name_to_exclude", VAR_NAME_TO_EXCLUDE)
-        super(AdamW, self).__init__(*args, **kwargs)
-        self.wd = weight_decay
-        self.pat = re.compile(var_name_to_exclude)
-
-    def _apply_weight_decay(self, params_grads):
-        """Apply weight decay."""
-        for p, g in params_grads:
-            if not self.pat.match(p.name):
-                with p.block.program._optimized_guard([p, g]):
-                    layers.assign(p * (1. - self.wd * self._learning_rate), p)
-        return
-
-    def apply_gradients(self, params_grads):
-        """Apply `weight_decay` in `apply_gradients`."""
-        optimize_ops = super(AdamW, self).apply_gradients(params_grads)
-        if self.wd > 0:
-            self._apply_weight_decay(params_grads)
-        return optimize_ops
+    def __init__(self,
+                 learning_rate,
+                 *args,
+                 **kwargs):
+        super(AdamW, self).__init__(
+            learning_rate,
+            *args,
+            **kwargs,
+            apply_decay_param_fun=lambda name: not any(
+                nd in name for nd in [".b_", "layer_norm"])
+        )

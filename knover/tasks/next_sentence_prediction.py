@@ -16,7 +16,6 @@
 from knover.core.task import Task
 from knover.data.nsp_reader import NSPReader
 from knover.tasks import register_task
-from knover.utils.args import str2bool
 
 
 @register_task("NextSentencePrediction")

@@ -20,13 +20,13 @@ import os
 import subprocess
 import time
 
-import numpy as np
+import paddle
 import paddle.fluid as fluid
+from paddle.distributed import fleet
 
 import knover.models as models
 import knover.tasks as tasks
-from knover.utils import check_cuda, Timer
-from knover.utils.args import parse_args, str2bool
+from knover.utils import check_cuda, parse_args, str2bool, Timer
 
 
 def setup_args():
@@ -52,6 +52,8 @@ def setup_args():
 def infer(args):
     """Inference main function."""
     if args.is_distributed:
+        fleet.init(is_collective=True)
+
         dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
         phase = "distributed_test"
@@ -76,7 +78,7 @@ def infer(args):
     timer = Timer()
     timer.start()
     infer_out = {}
-    step = 0
+    step = 0 # in case of no data input
     for step, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
         for pred in predictions:
@@ -84,7 +86,7 @@ def infer(args):
         if step % args.log_steps == 0:
             time_cost = timer.pass_time
             print(f"\tstep: {step}, time: {time_cost:.3f}, "
-                  f"queue size: {infer_generator._queue.size()}, "
+                  f"queue size: {infer_generator.queue.size()}, "
                   f"speed: {step / time_cost:.3f} steps/s")
 
     time_cost = timer.pass_time

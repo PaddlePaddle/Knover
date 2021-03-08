@@ -48,7 +48,8 @@ def add_cmdline_args(parser):
     """Add cmdline argument of Task."""
     group = parser.add_argument_group("Task")
     group.add_argument("--task", type=str, required=True,
-                       help="The task type.")
+                       help="The task type.",
+                       choices=list(TASK_REGISTRY.keys()))
 
     args, _ = parser.parse_known_args()
     if args.task not in TASK_REGISTRY:
@@ -57,6 +58,4 @@ def add_cmdline_args(parser):
     return group
 
 
-import knover.tasks.classification
 import knover.tasks.dialog_generation
-import knover.tasks.next_sentence_prediction

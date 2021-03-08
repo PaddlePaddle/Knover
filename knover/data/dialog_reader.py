@@ -14,15 +14,13 @@
 """Dialogue Reader."""
 
 from collections import namedtuple
-from contextlib import contextmanager
-import gzip
 import os
 
 import numpy as np 
 import paddle.fluid as fluid
 from paddle.fluid.incubate.fleet.collective import fleet
 
-from knover.utils import mask, pad_batch_data, str2bool
+from knover.utils import mask, open_file, pad_batch_data, str2bool
 import knover.utils.tokenization as tokenization
 
 
@@ -190,9 +188,9 @@ class DialogReader(object):
                 src_role_ids += [role_id_list[i]] * len(s_token_ids)
 
         field_values = {
-            "token_ids": [self.bos_id] + src_token_ids,
-            "type_ids": [0] * (len(src_token_ids) + 1),
-            "pos_ids": [0] + src_pos_ids
+            "token_ids": src_token_ids,
+            "type_ids": [0] * len(src_token_ids),
+            "pos_ids": src_pos_ids
         }
         if self.use_role:
             field_values["role_ids"] = [0] + src_role_ids
@@ -287,6 +285,12 @@ class DialogReader(object):
                     for k in field_values
                 }
 
+        # add BOS token
+        field_values = {
+            k: [self.bos_id] + field_values[k] if k == "token_ids" else [0] + field_values[k]
+            for k in field_values
+        }
+
         tgt_start_idx = len(field_values["token_ids"])
 
         if self.position_style == "relative":
@@ -333,7 +337,10 @@ class DialogReader(object):
             cols = list(map(lambda x: list(map(int, x.split(" "))), cols))
             if len(cols) > self.num_numerical_fields:
                 cols = cols[:self.num_numerical_fields]
-            tgt_start_idx = cols[0].index(self.bos_id, 1)
+            try:
+                tgt_start_idx = cols[0].index(self.bos_id, 1)
+            except ValueError:
+                tgt_start_idx = len(cols[0])
             record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=i)
             yield record
 
@@ -605,21 +612,15 @@ class DialogReader(object):
             batch_tgt_start_idx=batch_tgt_start_idx)
 
         if is_infer:
-            tgt_ids = np.array([[[self.bos_id]]] * len(batch_token_ids), dtype="int64")
+            bsz = len(batch_token_ids)
+            batch["tgt_ids"] = np.full([bsz, 1], self.bos_id, dtype="int64")
             if self.position_style == "continuous":
-                tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
+                batch["tgt_pos"] = np.array(batch_tgt_start_idx, dtype="int64").reshape(-1, 1)
             else:
-                tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
-            tgt_pos = tgt_pos.reshape(-1, 1, 1)
-            batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
-            batch["tgt_ids"] = tgt_ids.tolist()
-            batch["tgt_pos"] = tgt_pos.tolist()
-            batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
-
-            batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
-
+                batch["tgt_pos"] = np.zeros_like(batch_tgt_start_idx, dtype="int64").reshape(-1, 1)
+            batch["tgt_generation_mask"] = batch["generation_mask"][:, :1, :]
             batch_data_id = [record.data_id for record in batch_records]
-            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
+            batch["data_id"] = np.array(batch_data_id).astype("int64")
         else:
             batch["tgt_label"], batch["tgt_idx"] = mask(
                 batch_tokens=batch_token_ids,
@@ -631,17 +632,3 @@ class DialogReader(object):
                 is_unidirectional=True)
 
         return batch
-
-
-@contextmanager
-def open_file(filename):
-    """Construct a file handler.
-
-    The handler can read a normal file or a file compressed by `gzip`.
-    """
-    if filename.endswith(".gz"):
-        fp = gzip.open(filename, "rt")
-    else:
-        fp = open(filename)
-    yield fp
-    fp.close()

@@ -21,13 +21,13 @@ import subprocess
 import time
 
 import numpy as np
+import paddle
 import paddle.fluid as fluid
-from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
-import paddle.fluid.incubate.fleet.base.role_maker as role_maker
+from paddle.distributed import fleet
 
 import knover.models as models
 import knover.tasks as tasks
-from knover.utils import check_cuda, Timer, parse_args, str2bool
+from knover.utils import check_cuda, parse_args, str2bool, Timer
 
 
 def setup_args():
@@ -78,8 +78,7 @@ def run_cmd(cmd):
 def train(args):
     """The main function of training."""
     if args.is_distributed:
-        role = role_maker.PaddleCloudRoleMaker(is_collective=True)
-        fleet.init(role)
+        fleet.init(is_collective=True)
 
         dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
@@ -127,7 +126,7 @@ def train(args):
             current_lr = outputs.pop('scheduled_lr')
             print(f"[train][{current_epoch}] progress: {current_file_index}/{total_file} "
                   f"step: {step}, time: {time_cost:.3f}, "
-                  f"queue size: {train_generator._queue.size()}, "
+                  f"queue size: {train_generator.queue.size()}, "
                   f"speed: {args.log_steps / time_cost:.3f} steps/s")
             print(f"\tcurrent lr: {current_lr:.7f}")
             metrics = task.get_metrics(outputs)
@@ -146,7 +145,13 @@ def train(args):
     return
 
 
-def evaluate(task, model, generator, args, dev_count, gpu_id, training_step):
+def evaluate(task,
+             model,
+             generator,
+             args,
+             dev_count,
+             gpu_id,
+             training_step):
     """Run evaluation.
 
     Run evaluation on dataset which is generated from a generator. Support evaluation on single GPU and multiple GPUs.

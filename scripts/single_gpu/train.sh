@@ -19,6 +19,7 @@ python \
     --model ${model:-"Plato"} \
     --task ${task:-"DialogGeneration"} \
     --vocab_path ${vocab_path} \
+    --specials_path ${specials_path:-""} \
     --do_lower_case ${do_lower_case:-"false"} \
     --spm_model_file ${spm_model_file} \
     --init_pretraining_params ${init_params:-""} \
@@ -35,7 +36,6 @@ python \
     --warmup_steps ${warmup_steps:-0} \
     --weight_decay ${weight_decay:-0.0} \
     --use_amp ${use_amp:-"true"} \
-    --use_recompute ${use_recompute:-"false"} \
     --num_epochs ${num_epochs} \
     --log_steps ${log_steps} \
     --validation_steps ${validation_steps} \

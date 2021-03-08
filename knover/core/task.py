@@ -17,7 +17,7 @@ from abc import abstractmethod, ABC
 
 import numpy as np
 
-from knover.core.model import Model
+from knover.core.model import ModelInterface
 
 
 class Task(ABC):
@@ -27,29 +27,28 @@ class Task(ABC):
         self.debug_mode = False
         return
 
-    def train_step(self, model: Model, inputs):
+    def train_step(self, model: ModelInterface, inputs):
         """Run one training step."""
         outputs = model.train_step(inputs)
-        outputs = {k: v.tolist()[0] for k, v in outputs.items()}
+        outputs = {k: v.tolist()[0] if isinstance(v, np.ndarray) else v
+                   for k, v in outputs.items()}
         return outputs
 
-    def eval_step(self, model: Model, inputs):
+    def eval_step(self, model: ModelInterface, inputs):
         """Run one evaluation step"""
         outputs = model.eval_step(inputs)
         outputs = {k: v.tolist()[0] if isinstance(v, np.ndarray) else v
                    for k, v in outputs.items()}
         return outputs
 
-    def infer_step(self, model: Model, inputs):
+    def infer_step(self, model: ModelInterface, inputs):
         """Run one inference step."""
         predictions = model.infer_step(inputs)
         outputs = self._post_process_infer_output(predictions)
         return outputs
 
     def _post_process_infer_output(self, predictions):
-        """
-        Post-process inference output.
-        """
+        """Post-process inference output."""
         return predictions
 
     def merge_metrics_and_statistics(self, outputs, part_outputs):
@@ -81,7 +80,7 @@ class Task(ABC):
         outputs.pop("batch_size", None)
         return outputs
 
-    def get_data_loader(self, model, *args, is_infer=False, **kwargs):
+    def get_data_loader(self, model: ModelInterface, *args, is_infer=False, **kwargs):
         """Get the model's DataLoader.
 
         Args:

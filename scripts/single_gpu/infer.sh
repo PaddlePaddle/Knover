@@ -47,6 +47,7 @@ python -m \
     ${infer_args:-} \
     --in_tokens ${in_tokens:-"false"} \
     --batch_size ${batch_size:-1} \
+    --log_steps ${log_steps:-1} \
     --save_path ${save_path}
 exit_code=$?
 

@@ -38,11 +38,11 @@ fleetrun \
     --config_path ${config_path} \
     ${train_args:-} \
     --in_tokens ${in_tokens:-"false"} \
-    --batch_size ${batch_size:-8192} \
+    --batch_size ${batch_size} \
     --learning_rate ${lr} \
     --warmup_steps ${warmup_steps:-0} \
     --weight_decay ${weight_decay:-0.0} \
-    --use_amp ${use_amp:-"true"} \
+    --use_amp ${use_amp:-"false"} \
     --num_epochs ${num_epochs} \
     --log_steps ${log_steps} \
     --validation_steps ${validation_steps} \

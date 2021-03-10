@@ -14,15 +14,8 @@ export FLAGS_fuse_parameter_memory_size=64
 
 mkdir -p ${save_path}
 
-if [[ ${log_dir:-""} != "" ]]; then
-    mkdir -p ${log_dir}
-    distributed_args="${distributed_args:-} --log_dir ${log_dir}"
-fi
-
-fleetrun \
-    ${distributed_args:-} \
+python \
     ./knover/scripts/train.py \
-    --is_distributed true \
     --model ${model:-"Plato"} \
     --task ${task:-"DialogGeneration"} \
     --vocab_path ${vocab_path} \

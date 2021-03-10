@@ -25,4 +25,4 @@ In these model, three special tokens are used to represent subtasks in the compe
 
 |  F1   | BLEU1 / BLEU2 | DISTINCT1/DISTINCT2 |
 | :---: | :-----------: | :-----------------: |
-| 32.22 |  0.240/0.150  |     0.071/0.222     |
+| 28.56 |  0.218/0.126  |     0.087/0.260     |

@@ -9,7 +9,7 @@ Knover is a toolkit for knowledge grounded dialogue generation based on PaddlePa
 ## Requirements and Installation
 
 * python version >= 3.7
-* paddlepaddle-gpu version 1.8.0 ~ 1.8.5 (recommended version: 1.8.2.post107).
+* paddlepaddle-gpu version >= 1.8.0 (recommended version: 1.8.2.post107, support 2.0.x now).
     * You can install PaddlePaddle following [the instructions](https://www.paddlepaddle.org.cn/documentation/docs/en/install/index_en.html).
     * The specific version of PaddlePaddle is also based on your [CUDA version](https://developer.nvidia.com/cuda-downloads) (recommended version: 10.1) and [CuDNN version](https://developer.nvidia.com/rdp/cudnn-download) (recommended version: 7.6). See more information on [PaddlePaddle document about GPU support](https://www.paddlepaddle.org.cn/documentation/docs/en/install/index_en.html#paddlepaddle-s-support-for-gpu)
 * sentencepiece

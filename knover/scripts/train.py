@@ -20,7 +20,7 @@ import os
 import subprocess
 import time
 
-import numpy as np
+import paddle
 import paddle.fluid as fluid
 from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
 import paddle.fluid.incubate.fleet.base.role_maker as role_maker
@@ -238,6 +238,8 @@ def save_model(model, save_path, tag, dev_count, gpu_id, args):
 
 
 if __name__ == "__main__":
+    if hasattr(paddle, "enable_static"):
+        paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     train(args)

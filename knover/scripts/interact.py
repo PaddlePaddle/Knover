@@ -16,8 +16,9 @@
 import argparse
 from collections import namedtuple
 
-from termcolor import colored, cprint
+import paddle
 import paddle.fluid as fluid
+from termcolor import colored, cprint
 
 import knover.models as models
 from knover.tasks.dialog_generation import DialogGeneration
@@ -75,6 +76,8 @@ def interact(args):
 
 
 if __name__ == "__main__":
+    if hasattr(paddle, "enable_static"):
+        paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     interact(args)

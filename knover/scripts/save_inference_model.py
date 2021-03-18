@@ -15,6 +15,7 @@
 
 import argparse
 
+import paddle
 import paddle.fluid as fluid
 
 import knover.models as models
@@ -51,6 +52,8 @@ def save(args):
 
 
 if __name__ == "__main__":
+    if hasattr(paddle, "enable_static"):
+        paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     save(args)

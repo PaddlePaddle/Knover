@@ -14,6 +14,7 @@
 """Define model."""
 
 from knover.core.model import Model
+from knover.utils import parse_args
 
 MODEL_REGISTRY = {}
 
@@ -58,7 +59,7 @@ def add_cmdline_args(parser):
                        help="The path of model configuration.")
 
     # Model related.
-    args, _ = parser.parse_known_args()
+    args = parse_args(parser, allow_unknown=True)
     if args.model not in MODEL_REGISTRY:
         raise ValueError(f"Unknown model type: {args.model}")
     MODEL_REGISTRY[args.model].add_cmdline_args(parser)

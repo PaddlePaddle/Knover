@@ -23,8 +23,7 @@ import paddle.fluid.layers as layers
 
 import knover.optim
 import knover.optim.lr_scheduler as lr_scheduler
-from knover.utils import to_lodtensor, get_tensor
-from knover.utils.args import str2bool
+from knover.utils import to_lodtensor, get_tensor, str2bool
 
 
 class Model(ABC):

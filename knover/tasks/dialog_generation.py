@@ -96,11 +96,16 @@ class DialogGeneration(Task):
 
         predictions = []
         for data_id in group:
-            example = self.reader.features[data_id]
+            if data_id in self.reader.features:
+                example = self.reader.features[data_id]
+            else:
+                example = None
             preds = group[data_id]
             for pred in preds:
                 # TODO: fix tokenized input
-                if self.reader.use_role:
+                if example is None:
+                    words = post_process_context(pred["context_token_ids"], self.reader)
+                elif self.reader.use_role:
                     words = [self.reader.tokenizer.preprocess(s.split("\1")[0]).split(" ")
                              for s in example.src.split("[SEP]")]
                 else:
@@ -125,16 +130,17 @@ class DialogGeneration(Task):
 
             preds = sorted(preds, key=lambda pred: -pred["score"])
             if self.debug_mode:
-                print("Example:", example.data_id)
-                print("Context:")
-                for s in example.src.split(" [SEP] "):
-                    if self.reader.use_role:
-                        s, role_id = s.split("\1")
-                        s = f"{role_id}: {s}"
-                    print("\t" + s)
-                if "knowledge" in example._fields:
-                    print("Knowledge:")
-                    print("\t" + example.knowledge)
+                if example is not None:
+                    print("Example:", example.data_id)
+                    print("Context:")
+                    for s in example.src.split(" [SEP] "):
+                        if self.reader.use_role:
+                            s, role_id = s.split("\1")
+                            s = f"{role_id}: {s}"
+                        print("\t" + s)
+                    if "knowledge" in example._fields:
+                        print("Knowledge:")
+                        print("\t" + example.knowledge)
                 print("Predictions:")
                 for pred in preds:
                     print(f"\t{pred['response']}\t{pred['score']:.5f}")

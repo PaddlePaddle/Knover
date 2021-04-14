@@ -14,6 +14,7 @@
 """Define task."""
 
 from knover.core.task import Task
+from knover.utils import parse_args
 
 TASK_REGISTRY = {}
 
@@ -50,7 +51,7 @@ def add_cmdline_args(parser):
     group.add_argument("--task", type=str, required=True,
                        help="The task type.")
 
-    args, _ = parser.parse_known_args()
+    args = parse_args(parser, allow_unknown=True)
     if args.task not in TASK_REGISTRY:
         raise ValueError(f"Unknown task type: {args.task}")
     TASK_REGISTRY[args.task].add_cmdline_args(parser)

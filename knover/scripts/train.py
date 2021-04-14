@@ -27,7 +27,7 @@ import paddle.fluid.incubate.fleet.base.role_maker as role_maker
 
 import knover.models as models
 import knover.tasks as tasks
-from knover.utils import check_cuda, Timer, parse_args, str2bool
+from knover.utils import check_cuda, parse_args, str2bool, Timer
 
 
 def setup_args():
@@ -127,7 +127,7 @@ def train(args):
             current_lr = outputs.pop('scheduled_lr')
             print(f"[train][{current_epoch}] progress: {current_file_index}/{total_file} "
                   f"step: {step}, time: {time_cost:.3f}, "
-                  f"queue size: {train_generator._queue.size()}, "
+                  f"queue size: {train_generator.queue.size()}, "
                   f"speed: {args.log_steps / time_cost:.3f} steps/s")
             print(f"\tcurrent lr: {current_lr:.7f}")
             metrics = task.get_metrics(outputs)

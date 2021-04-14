@@ -57,7 +57,7 @@ def infer(args):
         phase = "distributed_test"
     else:
         dev_count = 1
-        gpu_id = 0
+        gpu_id = 7
         phase = "test"
     place = fluid.CUDAPlace(gpu_id)
 
@@ -101,7 +101,7 @@ def infer(args):
             pass
 
     # Only run on master GPU in each node
-    if gpu_id != 0:
+    if gpu_id != 7:
         return
 
     if args.is_distributed:

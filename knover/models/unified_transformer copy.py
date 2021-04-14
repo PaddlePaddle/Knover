@@ -376,8 +376,6 @@ class UnifiedTransformer(Model):
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
 
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")

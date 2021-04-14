@@ -153,34 +153,56 @@ class Model(ABC):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
                     outputs = self.forward(inputs, is_infer=True)
-                    # import pdb
-                    # pdb.set_trace()
                     predictions, sharding_info = self.infer(inputs, outputs)
                     self.infer_fetch_dict = predictions
                     
             
             self.without_beam_program = fluid.Program()
+            # import pdb
+            # pdb.set_trace()
+            # sharding for without_beam_program
             with fluid.program_guard(self.without_beam_program, fluid.Program()):
                 with fluid.unique_name.guard():
-                    inputs = self._get_feed_dict(is_infer=True)
+                    inputs["tgt_ids"] = layers.data(name="tgt_ids", shape=[-1, 256, 1], dtype="int64", lod_level=2)
+                    inputs["tgt_pos"] = layers.data(name="tgt_pos", shape=[-1, 256, 1], dtype="int64", lod_level=2)
+                    inputs["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
+                    inputs["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
+                    inputs["tgt_generation_mask"] = layers.data(name="tgt_generation_mask", shape=[-1, 1, 256], dtype="float32")
+                    inputs["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+                    inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+                    inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
+                    model = sharding_info["model"]
+                    # =================== #
+                    # start while loop
+                    # step_idx = sharding_info["step_idx"]
+                    # min_len = sharding_info["min_len"]
+                    # max_len = sharding_info["max_len"]
+                    # ids = sharding_info["ids"]
+                    # pos_biases = sharding_info["pos_biases"]
+                    # scores = sharding_info["scores"]
+                    # tgt_generation_mask = sharding_info["tgt_generation_mask"]
+                    # parent_idx = sharding_info["parent_idx"]
                     max_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["max_dec_len"], force_cpu=True)
                     min_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["min_dec_len"], force_cpu=True)
                     step_idx = layers.fill_constant(shape=[1], dtype="int64", value=0, force_cpu=True)
+
                     ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
                     pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
                     scores = layers.array_write(inputs["init_score"], step_idx)
                     tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
                     parent_idx = inputs["parent_idx"]
-                    eos_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
-                    eos_penalty[sharding_info["eos_id"]] = -1e9
+                    beam_size = sharding_info["beam_size"]
+                    vocab_size = sharding_info["vocab_size"]
+                    eos_id = sharding_info["eos_id"]
+                    unk_id = sharding_info["unk_id"]
+
+                    eos_penalty = np.zeros(vocab_size, dtype="float32")
+                    eos_penalty[eos_id] = -1e9
                     eos_penalty = layers.assign(eos_penalty)
 
-                    token_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
-                    token_penalty[sharding_info["unk_id"]] = -1e9
-                    if sharding_info["mask_id"] >= 0:
-                        token_penalty[sharding_info["mask_id"]] = -1e9
-                    token_penalty = layers.assign(token_penalty)
-                    # start while loop
+                    token_penalty = np.zeros(vocab_size, dtype="float32")
+                    token_penalty[unk_id] = -1e9
+
                     cond = layers.less_than(x=step_idx, y=max_len)
                     while_op = layers.While(cond)
                     with while_op.block():
@@ -189,8 +211,10 @@ class Model(ABC):
                         pre_scores = layers.array_read(array=scores, i=step_idx)
                         pos_bias = layers.array_read(array=pos_biases, i=step_idx)
                         pos_bias = layers.gather(input=pos_bias, index=parent_idx)
+
                         tmp_tgt_generation_mask = layers.array_read(tgt_generation_mask, i=step_idx)
                         dtype = tmp_tgt_generation_mask.dtype
+
                         append_mask = layers.fill_constant_batch_size_like(
                                 input=pre_ids,
                                 value=1.0,
@@ -198,6 +222,7 @@ class Model(ABC):
                                 dtype=dtype)
                         tmp_tgt_generation_mask = layers.concat([tmp_tgt_generation_mask, append_mask], axis=2)
                         pre_mask = tmp_tgt_generation_mask = layers.gather(input=tmp_tgt_generation_mask, index=parent_idx)
+
                         pre_sent = layers.fill_constant_batch_size_like(
                                 input=pre_mask,
                                 value=1,
@@ -212,6 +237,7 @@ class Model(ABC):
                                     shape=[-1, 1, 1],
                                     dtype=pre_ids.dtype), y=step_idx, axis=0),
                             pos_bias, axis=0)
+
                         if sharding_info["use_role"]:
                             pre_role = layers.fill_constant_batch_size_like(
                                 input=pre_mask,
@@ -220,19 +246,21 @@ class Model(ABC):
                                 dtype=pre_ids.dtype)
                         else:
                             pre_role = None
-                        # import pdb
-                        # pdb.set_trace()
-                        dec_out, _ = sharding_info["model"]._generation_network(
+
+                        dec_out, _ = model._generation_network(
                             token_ids=pre_ids,
                             type_ids=pre_sent,
                             pos_ids=pre_pos,
                             role_ids=pre_role,
                             generation_mask=tmp_tgt_generation_mask,
                             gather_idx=parent_idx)
-                        logits = sharding_info["model"]._calc_logits(dec_out)
+                        logits = model._calc_logits(dec_out)
 
+                        # ignore unk and mask token
                         if sharding_info["ignore_unk"]:
                             logits = layers.elementwise_add(logits, token_penalty, axis=1)
+
+                        # min dec length
                         min_len_cond = layers.less_than(x=step_idx, y=min_len)
                         def min_len_penalty():
                             """Plus minimum length penalty."""
@@ -242,23 +270,18 @@ class Model(ABC):
                             return logits
                         logits = layers.case([(min_len_cond, min_len_penalty)], default=no_penalty)
 
-
                         # get probs
                         probs = layers.softmax(logits / sharding_info["temperature"])
 
                         if sharding_info["decoding_strategy"] == "beam_search":
                             topk_scores, topk_indices = layers.topk(
-                                input=probs, k=sharding_info["beam_size"])
+                                input=probs, k=beam_size)
                         else:
                             if sharding_info["decoding_strategy"].startswith("sampling"):
                                 sampling_ids = layers.sampling_id(probs, dtype="int")
                             elif sharding_info["decoding_strategy"].startswith("topk_sampling"):
                                 topk_probs, _ = layers.topk(input=probs, k=sharding_info["topk"])
-                                ge_cond = layers.cast(
-                                    layers.greater_equal(
-                                        probs,
-                                        layers.unsqueeze(topk_probs[:, -1], [1])),
-                                    "float32")
+                                ge_cond = layers.cast(layers.greater_equal(probs, layers.unsqueeze(topk_probs[:, -1], [1])), "float32")
                                 old_probs = probs
                                 probs = probs * ge_cond / layers.reduce_sum(topk_probs, dim=-1, keep_dim=True)
                                 sampling_ids = layers.sampling_id(probs, dtype="int")
@@ -286,22 +309,25 @@ class Model(ABC):
                                 probs = old_probs
                             else:
                                 raise ValueError(sharding_info["decoding_strategy"])
+
                             sampling_scores = layers.one_hot(
                                 layers.unsqueeze(sampling_ids, [1]), probs.shape[1]
                             )
                             sampling_scores = sampling_scores * probs - (1 - sampling_scores) * 1e3
                             topk_scores, topk_indices = layers.topk(
                                 input=sampling_scores, k=1)
+
                         pre_len = layers.cast(step_idx, "float32")
                         layers.increment(x=step_idx, value=1.0, in_place=True)
                         cur_len = layers.cast(step_idx, "float32")
+
                         # update scores
-                        if self.length_average:
+                        if sharding_info["length_average"]:
                             accu_scores = layers.elementwise_add(
                                 x=layers.log(topk_scores), y=pre_scores * pre_len, axis=0) / cur_len
-                        elif self.length_penalty > 0:
-                            pre_lp = layers.pow((5 + pre_len) / 6, self.length_penalty)
-                            cur_lp = layers.pow((5 + cur_len) / 6, self.length_penalty)
+                        elif sharding_info["length_penalty"] > 0:
+                            pre_lp = layers.pow((5 + pre_len) / 6, sharding_info["length_penalty"])
+                            cur_lp = layers.pow((5 + cur_len) / 6, sharding_info["length_penalty"])
                             accu_scores = layers.elementwise_add(
                                 x=layers.log(topk_scores), y=pre_scores * pre_lp, axis=0) / cur_lp
                         else:
@@ -314,9 +340,10 @@ class Model(ABC):
                             pre_scores=pre_scores,
                             ids=topk_indices,
                             scores=accu_scores,
-                            beam_size=sharding_info["beam_size"],
+                            beam_size=beam_size,
                             end_id=sharding_info["eos_id"],
                             return_parent_idx=True)
+
                         layers.array_write(selected_ids, i=step_idx, array=ids)
                         layers.array_write(selected_scores, i=step_idx, array=scores)
                         layers.array_write(pre_mask, i=step_idx, array=tgt_generation_mask)
@@ -327,14 +354,17 @@ class Model(ABC):
                         length_cond = layers.less_than(x=step_idx, y=max_len)
                         finish_cond = layers.logical_not(layers.is_empty(x=selected_ids))
                         layers.logical_and(x=length_cond, y=finish_cond, out=cond)
-
-
-
-
-
-        
-            # sharding for without_beam_program
-            
+                    
+                    if self.is_distributed and self.use_recompute:
+                        self._set_checkpoints(outputs["checkpoints"])
+                    import pdb
+                    pdb.set_trace()
+                    
+                    metrics = self.get_metrics(inputs, outputs)
+                    scheuled_lr = self.optimize(metrics)
+                    with open("sharding_program.txt", "w") as f:
+                        f.write(str(self.without_beam_program))
+                        print("sharding_program ================")
             self.without_beam_program = self.without_beam_program.clone(for_test=True)
             with open("sharding_program_no_grad.txt", "w") as f:
                 f.write(str(self.without_beam_program))

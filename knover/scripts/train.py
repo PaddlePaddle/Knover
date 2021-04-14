@@ -87,7 +87,7 @@ def train(args):
         trainer_id = fleet.worker_index()
     else:
         dev_count = 1
-        gpu_id = 0
+        gpu_id = 7
         trainers_num = 1
         trainer_id = 0
     place = fluid.CUDAPlace(gpu_id)
@@ -112,10 +112,14 @@ def train(args):
         part_id=gpu_id,
         phase="distributed_valid" if args.is_distributed else "valid"
     )
-
+    
     # start training
     timer = Timer()
     timer.start()
+    with open("program_train.txt", "w") as f:
+        f.write(str(model.train_program.clone(for_test=True)))
+        print("program done =================== ")
+    
     print("Training is start.")
     for step, data in enumerate(train_generator(), args.start_step + 1):
         outputs = task.train_step(model, data)

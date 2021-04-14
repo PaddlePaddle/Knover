@@ -9,7 +9,7 @@ if [[ $# != 1 ]]; then
 fi
 
 # local env
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 job_conf=$1
 source ${job_conf}

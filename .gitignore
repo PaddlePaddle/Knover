@@ -54,3 +54,7 @@ coverage.xml
 /docs/_build/
 
 backup
+24L*
+data/
+*.txt
+output/

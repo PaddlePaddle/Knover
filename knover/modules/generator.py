@@ -109,12 +109,9 @@ class Generator(object):
             predictions: A dict mapping keys to corresponding predictions.
         """
         # prepare while loop
-        max_len = layers.fill_constant(
-            shape=[1], dtype="int64", value=self.max_dec_len, force_cpu=True)
-        min_len = layers.fill_constant(
-            shape=[1], dtype="int64", value=self.min_dec_len, force_cpu=True)
-        step_idx = layers.fill_constant(
-            shape=[1], dtype="int64", value=0, force_cpu=True)
+        max_len = layers.fill_constant([1], "int64", self.max_dec_len, force_cpu=True)
+        min_len = layers.fill_constant([1], "int64", self.min_dec_len, force_cpu=True)
+        step_idx = layers.fill_constant([1], "int64", 0, force_cpu=True)
 
         ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
         pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
@@ -217,9 +214,7 @@ class Generator(object):
                 elif self.decoding_strategy.startswith("topk_sampling"):
                     topk_probs, _ = layers.topk(input=probs, k=self.topk)
                     ge_cond = layers.cast(
-                        layers.greater_equal(
-                            probs,
-                            layers.unsqueeze(topk_probs[:, -1], [1])),
+                        layers.greater_equal(probs, topk_probs[:, -1:]),
                         "float32")
                     old_probs = probs
                     probs = probs * ge_cond / layers.reduce_sum(topk_probs, dim=-1, keep_dim=True)
@@ -249,12 +244,9 @@ class Generator(object):
                 else:
                     raise ValueError(self.decoding_strategy)
 
-                sampling_scores = layers.one_hot(
-                    layers.unsqueeze(sampling_ids, [1]), probs.shape[1]
-                )
+                sampling_scores = layers.one_hot(layers.unsqueeze(sampling_ids, [1]), self.vocab_size)
                 sampling_scores = sampling_scores * probs - (1 - sampling_scores) * 1e3
-                topk_scores, topk_indices = layers.topk(
-                    input=sampling_scores, k=1)
+                topk_scores, topk_indices = layers.topk(sampling_scores, k=1)
 
             pre_len = layers.cast(step_idx, "float32")
             layers.increment(x=step_idx, value=1.0, in_place=True)

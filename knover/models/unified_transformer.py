@@ -225,6 +225,7 @@ class UnifiedTransformer(Model):
                             role_ids=None,
                             generation_mask=None,
                             aux_emb=None,
+                            name="encoder",
                             gather_idx=None):
         """Run Transformer generation network.
 
@@ -250,12 +251,14 @@ class UnifiedTransformer(Model):
         return self._encode(
             emb_out,
             attn_bias,
+            name=name
             caches=self.generation_caches,
             gather_idx=gather_idx)
 
     def _encode(self,
                 emb_input,
                 attn_bias,
+                name="encoder",
                 caches=None,
                 gather_idx=None):
         """Run Transformer encode pass.
@@ -288,7 +291,7 @@ class UnifiedTransformer(Model):
             param_initializer=self.param_initializer,
             epsilon=self.epsilon,
             n_layer_per_block=self.n_layer_per_block,
-            name="encoder",
+            name=name,
             caches=caches,
             gather_idx=gather_idx,
             store=caches is not None
@@ -460,7 +463,7 @@ class UnifiedTransformer(Model):
         elif isinstance(inputs["data_id"], fluid.LoDTensor):
             return inputs["data_id"].shape()[0]
         else:
-            raise ValueError(f"Invalid type of `data_id`: {type(inputs['data'])}")
+            raise ValueError(f"Invalid type of `data_id`: {type(inputs['data_id'])}")
 
     def _run_generation(self, inputs):
         """Run generation."""

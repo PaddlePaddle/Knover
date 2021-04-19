@@ -28,8 +28,6 @@ import knover.optim.lr_scheduler as lr_scheduler
 from knover.utils import to_lodtensor, get_tensor
 from knover.utils.args import str2bool
 
-from knover.core.split_program import replace
-
 
 class Model(ABC):
     """Basic model wrapper of PaddlePaddle.
@@ -155,24 +153,25 @@ class Model(ABC):
         """
         self.startup_program = fluid.Program()
         if self.run_infer:
-            self.is_distributed = True
             if self.is_distributed:
                 self._init_distributed_strategy()
             # build inference program
-            import pdb
-            pdb.set_trace()
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
                     outputs = self.forward(inputs, is_infer=True)
-                    print(outputs)                   
+                    print("================")
+                    print(outputs)
+                    print("================")
+                    
                     predictions, sharding_info = self.infer(inputs, outputs)
                     self.infer_fetch_dict = predictions
 
-
-            # sharding for without_beam_program
+                    
+            
             self.without_beam_program = fluid.Program()
+            self.is_distributed = True
             with fluid.program_guard(self.without_beam_program, fluid.Program()):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
@@ -244,20 +243,35 @@ class Model(ABC):
                         generation_mask=tmp_tgt_generation_mask,
                         gather_idx=parent_idx)
                         
+                    print("===============")
                     # outputs = self.forward(inputs)
-                    
+                    self.is_distributed = True
+                    self._init_distributed_strategy()
+                    print("==============")
+
                     # if self.use_recompute:
                     #     self._set_checkpoints(outputs["checkpoints"])
                     metrics = self.get_metrics(inputs, outputs)
+                    # import pdb
+                    # pdb.set_trace()
                     self.optimize(metrics)
                     
-                    with open("sharding_program.txt", "w") as f:
+                    with open("sharding_program_compare.txt", "w") as f:
                         f.write(str(fluid.default_main_program()))
                         print("sharding_program ================")
-            self.without_beam_program = self.without_beam_program.clone(for_test=True)
+            # import pdb
+            # pdb.set_trace()
+            # sharding for without_beam_program
+            
+            # self.without_beam_program = self.without_beam_program.clone(for_test=True)
+            with open("sharding_program_no_grad.txt", "w") as f:
+                f.write(str(self.without_beam_program))
+                print("sharding_program ================")
+
+
+
             self.infer_program = self.infer_program.clone(for_test=True)
-            # fuse program
-            replace(self.without_beam_program, self.infer_program)
+
             self.program = self.infer_program
             
         else:

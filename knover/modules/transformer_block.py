@@ -109,8 +109,8 @@ def multi_head_attention(queries,
         """Scaled Dot-Product Attention"""
         scaled_q = layers.scale(x=q, scale=d_key ** -0.5)
         product = layers.matmul(x=scaled_q, y=k, transpose_y=True)
-        if attn_bias:
-            product += attn_bias
+        # if attn_bias:
+        #     product += attn_bias
         weights = layers.softmax(product, use_cudnn=True)
         if dropout_rate:
             weights = layers.dropout(
@@ -350,7 +350,8 @@ def encoder(enc_input,
         for i in range(n_layer // n_layer_per_block):
             for _ in range(n_layer_per_block):
                 names.append(name + "_layer_" + str(i))
-
+    # import pdb
+    # pdb.set_trace()
     for i in range(n_layer):
         enc_output, cps = encoder_layer(
             enc_input,

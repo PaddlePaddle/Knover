@@ -248,9 +248,12 @@ class UnifiedTransformer(Model):
         """
         emb_out, n_head_self_attn_mask = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
+        # return self._encode(
+        #     emb_out, n_head_self_attn_mask, None,
+        #     gather_idx=gather_idx)
         return self._encode(
-            emb_out, n_head_self_attn_mask, self.generation_caches,
-            gather_idx=gather_idx)
+           emb_out, n_head_self_attn_mask, self.generation_caches,
+           gather_idx=gather_idx)
 
     def _encode(self, emb_input, n_head_self_attn_mask, caches=None, gather_idx=None):
         """Run Transformer encode pass.

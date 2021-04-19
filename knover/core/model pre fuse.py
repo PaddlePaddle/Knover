@@ -28,8 +28,6 @@ import knover.optim.lr_scheduler as lr_scheduler
 from knover.utils import to_lodtensor, get_tensor
 from knover.utils.args import str2bool
 
-from knover.core.split_program import replace
-
 
 class Model(ABC):
     """Basic model wrapper of PaddlePaddle.
@@ -159,8 +157,6 @@ class Model(ABC):
             if self.is_distributed:
                 self._init_distributed_strategy()
             # build inference program
-            import pdb
-            pdb.set_trace()
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
@@ -256,8 +252,11 @@ class Model(ABC):
                         print("sharding_program ================")
             self.without_beam_program = self.without_beam_program.clone(for_test=True)
             self.infer_program = self.infer_program.clone(for_test=True)
-            # fuse program
-            replace(self.without_beam_program, self.infer_program)
+
+            device_program_map = default(Program)
+            block = self.without_beam_program.block(0)
+            
+
             self.program = self.infer_program
             
         else:

@@ -140,7 +140,7 @@ class Generator(object):
         if self.mask_id >= 0:
             token_penalty[self.mask_id] = -1e9
         token_penalty = layers.assign(token_penalty)
-
+        
         sharding_info = {
             "model": model,
             "decoding_strategy": self.decoding_strategy,
@@ -326,10 +326,9 @@ class Generator(object):
 
         with open("program_without_beam_search.txt", "w") as f:
             f.write(str(fluid.default_main_program()))
-        with open("program_without_beam_search_True.txt", "w") as f:
-            f.write(str(fluid.default_main_program().clone(for_test=True)))
-        finished_ids, finished_scores = layers.beam_search_decode(
-            ids, scores, beam_size=beam_size, end_id=self.eos_id)
+        # with open("program_without_beam_search_True.txt", "w") as f:
+        #     f.write(str(fluid.default_main_program().clone(for_test=True)))
+        finished_ids, finished_scores = layers.beam_search_decode(ids, scores, beam_size=beam_size, end_id=self.eos_id)
         with open("program.txt", "w") as f:
             f.write(str(fluid.default_main_program()))
         # print(str(fluid.default_main_program()))
@@ -338,8 +337,7 @@ class Generator(object):
             "finished_ids": finished_ids,
             "finished_scores": finished_scores,
             "token_ids": inputs["token_ids"],
-            "data_id": inputs["data_id"],
-            # "without_beam_program": without_beam_program
+            "data_id": inputs["data_id"]
         }
         
         # import pdb

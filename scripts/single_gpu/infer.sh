@@ -30,9 +30,10 @@ if [[ ${nsp_init_params:-""} != "" ]]; then
     fi
     infer_args="${infer_args} --nsp_inference_model_path ${nsp_init_params}"
 fi
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1
 python -m paddle.distributed.launch \
     ./knover/scripts/infer.py \
+    --is_distributed True \
     --model ${model:-"Plato"} \
     --task ${task:-"DialogGeneration"} \
     --vocab_path ${vocab_path} \

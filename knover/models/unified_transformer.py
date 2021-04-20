@@ -379,8 +379,8 @@ class UnifiedTransformer(Model):
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
 
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
+            # feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+            # feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
@@ -471,6 +471,10 @@ class UnifiedTransformer(Model):
         """Run generation."""
         batch_size = self._get_batch_size(inputs)
         inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
+        with open("run_generation_outputprogram_before.txt", "w") as f:
+            f.write(str(self.infer_program))
+            print("gen_output_program_____________________")
+            
         outputs = self._execute(
             self.infer_program,
             inputs,

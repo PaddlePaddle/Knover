@@ -132,8 +132,8 @@ def multi_head_attention(queries,
         # v, which is the cache input for next time step, reshape the cache
         # input from the previous time step first.
         cache_k, cache_v = cache["k"], cache["v"]
+        # print(cache_k, gather_idx)
         select_k = layers.gather(cache_k, index=gather_idx)
-        # print(cache_v, gather_idx)
         select_v = layers.gather(cache_v, index=gather_idx)
         # print("cache_k: ", cache_k, "cache_v: ", cache_v)
         # print("select_k: ", select_k, "select_v: ", select_v)

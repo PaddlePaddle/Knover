@@ -52,8 +52,8 @@ def infer(args):
     """Inference main function."""
     if args.is_distributed:
         dev_count = fluid.core.get_cuda_device_count()
-        # gpu_id = int(os.getenv("FLAGS_selected_gpus"))
-        gpu_id = int(0)
+        gpu_id = int(os.getenv("FLAGS_selected_gpus"))
+        # gpu_id = int(0)
         phase = "distributed_test"
     else:
         dev_count = 1
@@ -61,7 +61,6 @@ def infer(args):
         gpu_id = int(0)
         phase = "test"
     place = fluid.CUDAPlace(gpu_id)
-
     task = tasks.create_task(args)
     model = models.create_model(args, place)
     infer_generator = task.get_data_loader(
@@ -140,14 +139,16 @@ if __name__ == "__main__":
         paddle.enable_static()
     # if args.is_distributed:
     #role = role_maker.PaddleCloudRoleMaker(is_collective=True)
+    
     fleet.init(is_collective=True)
-
     dev_count = fluid.core.get_cuda_device_count()
-    # gpu_id = int(os.getenv("FLAGS_selected_gpus"))
-    gpu_id = int(0)
+    args = setup_args()
+    if args.is_distributed:      
+        gpu_id = int(os.getenv("FLAGS_selected_gpus"))
+    else:
+        gpu_id = int(0)
+    # gpu_id = int(0)
     trainers_num = fleet.worker_num()
     trainer_id = fleet.worker_index()
-
-    args = setup_args()
     check_cuda(True)
     infer(args)

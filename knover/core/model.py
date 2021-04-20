@@ -124,7 +124,7 @@ class Model(ABC):
         dist_strategy.sharding = True
         dist_strategy.sharding_configs = {
             "fuse_broadcast_MB": 32,
-            "hybrid_dp": True,
+            "hybrid_dp": False,
             "sharding_group_size": 2
         }
         # dist_strategy.exec_strategy = exec_strategy
@@ -175,17 +175,26 @@ class Model(ABC):
 
 
                     self.infer_fetch_dict = predictions
+            with open("origin_startup_program.txt", "w") as f:
+                f.write(str(self.startup_program))
 
 
             # sharding for without_beam_program
-            import pdb
-            pdb.set_trace()
+            # import pdb
+            # pdb.set_trace()
             self.generation_caches = generation_caches_tmp
             # print(self.generation_caches)
             self.without_beam_program = fluid.Program()
-            with fluid.program_guard(self.without_beam_program, fluid.Program()):
+            self.sharding_startup_program = fluid.Program()
+            for cache in self.generation_caches:
+                self.without_beam_program.block(0)._clone_variable(cache["k"], False)
+                self.without_beam_program.block(0)._clone_variable(cache["v"], False)
+            with fluid.program_guard(self.without_beam_program, self.sharding_startup_program):
                 with fluid.unique_name.guard():
-                    self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
+                    inputs = self._get_feed_dict(is_infer=True)
+                    inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+                    inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
+                    # self.infer_feed_dict = inputs
                     max_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["max_dec_len"], force_cpu=True)
                     min_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["min_dec_len"], force_cpu=True)
                     step_idx = layers.fill_constant(shape=[1], dtype="int64", value=0, force_cpu=True)
@@ -264,10 +273,16 @@ class Model(ABC):
                     with open("sharding_program.txt", "w") as f:
                         f.write(str(fluid.default_main_program()))
                         print("sharding_program ================")
+            with open("sharding_startup_program.txt", "w") as f:
+                f.write(str(self.sharding_startup_program))
             self.without_beam_program = self.without_beam_program.clone(for_test=True)
             self.infer_program = self.infer_program.clone(for_test=True)
             # fuse program
+            with open("infer_program_up.txt", "w") as f:
+                f.write(str(self.infer_program))
             replace(self.without_beam_program, self.infer_program)
+            with open("infer_program_down.txt", "w") as f:
+                f.write(str(self.infer_program))
             self.program = self.infer_program
             
         else:

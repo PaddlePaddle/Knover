@@ -51,27 +51,21 @@ def op_outputs(op, src_block, dst_block):
 
     return outputs
 
-def create_var(vars, src_block, dst_block, should_rename=False):
+def create_var(vars, src_block, dst_block):
     for var in vars:
         print(var, "in used_var_set", "True" if var in used_var_set else "False")
         if var in used_var_set or "_blocking_queue" in var:continue
+        print(1)
         used_var_set.add(var)
+        print(2)
         if dst_block.has_var(var):continue
+        print(3)
+        print("ahahh")
         source_var = src_block._var_recursive(var)
         if source_var.type == core.VarDesc.VarType.READER:
             dst_var= dst_block.create_var(name=var, type=core.VarDesc.VarType.READER, persistable=source_var.persistable)
         else:
             dst_var = dst_block._clone_variable(source_var, False)
-        if should_rename:
-            for op in src_block.ops:
-                new_var_name = var + ".tmp"
-                print("rename {} to {}".format(var, new_var_name))
-                src_input_vars = op.desc.input_arg_names()
-                dst_input_vars = op.desc.output_arg_names()
-                all_vars = src_input_vars + dst_input_vars
-                if var in all_vars:
-                    op._rename_input(var, new_var_name)
-                    op._rename_output(var, new_var_name)
         print("created")
         dst_var.stop_gradient = source_var.stop_gradient
 
@@ -126,17 +120,13 @@ def replace(src_program, dst_program, \
                 print(src_block.has_var(src_var))
             if not src_block.has_var(dst_var):
                 # 因为修改的是src
-                create_var([dst_var], dst_block, src_block, should_rename=False)
-            else:
-                create_var([dst_var], dst_block, src_block, should_rename=True)
+                create_var([dst_var], dst_block, src_block)
             src_op._rename_input(src_var, dst_var)
         
         for (src_var, dst_var) in zip(src_output_vars, dst_output_vars):
             if not src_block.has_var(dst_var):
-                create_var([dst_var], dst_block, src_block, should_rename=False)
                 # 因为修改的是src
-            else:
-                create_var([dst_var], dst_block, src_block, should_rename=True)
+                create_var([dst_var], dst_block, src_block)
             src_op._rename_output(src_var, dst_var)
         
         dst_op_pointer += 1

@@ -405,6 +405,9 @@ class UnifiedTransformer(Model):
                     dtype=self.dtype,
                     value=0),
             } for i in range(self.n_layer)]
+            # print("====================")
+            # print("k: ", self.d_key * self.n_head, "v: ", self.d_value * self.n_head)
+            # print("====================")
         else:
             self.generation_caches = None
 

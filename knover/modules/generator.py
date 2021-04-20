@@ -113,6 +113,7 @@ class Generator(object):
         # prepare while loop
         # import pdb
         # pdb.set_trace()
+        
         max_len = layers.fill_constant(
             shape=[1], dtype="int64", value=self.max_dec_len, force_cpu=True)
         min_len = layers.fill_constant(
@@ -140,9 +141,8 @@ class Generator(object):
         if self.mask_id >= 0:
             token_penalty[self.mask_id] = -1e9
         token_penalty = layers.assign(token_penalty)
-        
+
         sharding_info = {
-            "model": model,
             "decoding_strategy": self.decoding_strategy,
             "beam_size": beam_size,
             "mask_id": self.mask_id,
@@ -157,7 +157,8 @@ class Generator(object):
             "topp": self.topp,
             "topk": self.topk,
             "max_dec_len": self.max_dec_len,
-            "min_dec_len": self.min_dec_len
+            "min_dec_len": self.min_dec_len,
+            "generation_caches": model.generation_caches
         }
 
         # start while loop
@@ -165,7 +166,7 @@ class Generator(object):
         while_op = layers.While(cond)
         # with open("program_pre.txt", "w") as f:
         #     f.write(str(fluid.default_main_program()))
-        
+
         with while_op.block():
             pre_ids = layers.array_read(array=ids, i=step_idx)
             pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
@@ -207,7 +208,6 @@ class Generator(object):
                     dtype=pre_ids.dtype)
             else:
                 pre_role = None
-
             dec_out, _ = model._generation_network(
                 token_ids=pre_ids,
                 type_ids=pre_sent,
@@ -332,7 +332,7 @@ class Generator(object):
         with open("program.txt", "w") as f:
             f.write(str(fluid.default_main_program()))
         # print(str(fluid.default_main_program()))
-
+        
         predictions = {
             "finished_ids": finished_ids,
             "finished_scores": finished_scores,

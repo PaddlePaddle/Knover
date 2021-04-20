@@ -159,19 +159,29 @@ class Model(ABC):
             if self.is_distributed:
                 self._init_distributed_strategy()
             # build inference program
-            import pdb
-            pdb.set_trace()
+            # import pdb
+            # pdb.set_trace()
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)
-                    print(outputs)                   
+                    outputs = self.forward(inputs, is_infer=True)                    
+                    generation_caches_tmp = list()
+                    for cache in self.generation_caches:
+                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})    
+                    # print(generation_caches_tmp)          
                     predictions, sharding_info = self.infer(inputs, outputs)
+                    # print(generation_caches_tmp)
+
+
                     self.infer_fetch_dict = predictions
 
 
             # sharding for without_beam_program
+            import pdb
+            pdb.set_trace()
+            self.generation_caches = generation_caches_tmp
+            # print(self.generation_caches)
             self.without_beam_program = fluid.Program()
             with fluid.program_guard(self.without_beam_program, fluid.Program()):
                 with fluid.unique_name.guard():
@@ -236,7 +246,7 @@ class Model(ABC):
                     #import pdb
                     #pdb.set_trace()
                     outputs = {}
-                    outputs['enc_out'], _ = sharding_info["model"]._generation_network(
+                    outputs['enc_out'], _ = self._generation_network(
                         token_ids=pre_ids,
                         type_ids=pre_sent,
                         pos_ids=pre_pos,

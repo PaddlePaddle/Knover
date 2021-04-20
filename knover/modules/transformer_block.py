@@ -109,8 +109,10 @@ def multi_head_attention(queries,
         """Scaled Dot-Product Attention"""
         scaled_q = layers.scale(x=q, scale=d_key ** -0.5)
         product = layers.matmul(x=scaled_q, y=k, transpose_y=True)
-        # if attn_bias:
-        #     product += attn_bias
+        # print("attn_bias: ", attn_bias, "q: ", q)
+        # print("product: ", product, "k: ", k)
+        if attn_bias:
+            product += attn_bias
         weights = layers.softmax(product, use_cudnn=True)
         if dropout_rate:
             weights = layers.dropout(
@@ -122,6 +124,8 @@ def multi_head_attention(queries,
         return out
 
     q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
+    # print("q: ", q, "k: ", k)
+    # print("v: ", v)
 
     if cache is not None:  # use cache and concat time steps
         # Since the inplace reshape in __split_heads changes the shape of k and
@@ -129,7 +133,10 @@ def multi_head_attention(queries,
         # input from the previous time step first.
         cache_k, cache_v = cache["k"], cache["v"]
         select_k = layers.gather(cache_k, index=gather_idx)
+        # print(cache_v, gather_idx)
         select_v = layers.gather(cache_v, index=gather_idx)
+        # print("cache_k: ", cache_k, "cache_v: ", cache_v)
+        # print("select_k: ", select_k, "select_v: ", select_v)
         select_k = layers.reshape(select_k, shape=[0, 0, d_key * n_head])
         select_v = layers.reshape(select_v, shape=[0, 0, d_value * n_head])
         if store:
@@ -148,7 +155,7 @@ def multi_head_attention(queries,
     q = __split_heads(q, n_head)
     k = __split_heads(k, n_head)
     v = __split_heads(v, n_head)
-
+    # print("q: ", q, "k: ", k, "v: ", v)
     ctx_multiheads = __scaled_dot_product_attention(q, k, v, attn_bias, d_key,
                                                   dropout_rate)
 
@@ -350,6 +357,7 @@ def encoder(enc_input,
         for i in range(n_layer // n_layer_per_block):
             for _ in range(n_layer_per_block):
                 names.append(name + "_layer_" + str(i))
+ 
     # import pdb
     # pdb.set_trace()
     for i in range(n_layer):

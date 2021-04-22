@@ -1,0 +1,12 @@
+{Out=['tmp_76']} = elementwise_add(inputs={X=['matmul_48.tmp_0'], Y=['unsqueeze2_1.tmp_0']}, Scale_out = 1.0, Scale_x = 1.0, Scale_y = 1.0, axis = -1, mkldnn_data_type = float32, op_device = , op_namescope = /, op_role = 0, op_role_var = [], use_mkldnn = False, use_quantizer = False, x_data_format = , y_data_format = )
+这个在原先未改名sharding的program中是第1876行，第122个op
+{Out=['tmp_2']} = elementwise_add(inputs={X=['matmul_0.tmp_0'], Y=['unsqueeze2_0.tmp_0']}, Scale_out = 1.0, Scale_x = 1.0, Scale_y = 1.0, axis = -1, mkldnn_data_type = float32, op_device = , op_namescope = /, op_role = 0, op_role_var = [], use_mkldnn = False, use_quantizer = False, x_data_format = , y_data_format = )
+初步定位到transformer_block.py的第364行
+ X's shape: [-1, 16, 1, 2],Y's shape: [-1, 16, 258, 64].
+
+ matmul_48.tmp_0 (-1, 16, 1, 2)
+ tmp_76 (-1, 16, 1, 257)
+
+ var transpose_97.tmp_0 : paddle.VarType.LOD_TENSOR.shape(-1, 16, 2, 64).astype(VarType.FP32)
+ 在51个epoch改动的
+ "concat_49.tmp_0"

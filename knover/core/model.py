@@ -165,15 +165,13 @@ class Model(ABC):
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)                    
+                    outputs = self.forward(inputs, is_infer=True)               
                     generation_caches_tmp = list()
                     for cache in self.generation_caches:
                         generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})    
                     # print(generation_caches_tmp)          
                     predictions, sharding_info = self.infer(inputs, outputs)
                     # print(generation_caches_tmp)
-
-
                     self.infer_fetch_dict = predictions
             with open("origin_startup_program.txt", "w") as f:
                 f.write(str(self.startup_program))
@@ -187,6 +185,7 @@ class Model(ABC):
             self.without_beam_program = fluid.Program()
             self.sharding_startup_program = fluid.Program()
             for cache in self.generation_caches:
+                # 将cache里的内容拷贝到sharding的program
                 self.without_beam_program.block(0)._clone_variable(cache["k"], False)
                 self.without_beam_program.block(0)._clone_variable(cache["v"], False)
             with fluid.program_guard(self.without_beam_program, self.sharding_startup_program):
@@ -244,6 +243,7 @@ class Model(ABC):
                                 shape=[-1, 1, 1],
                                 dtype=pre_ids.dtype), y=step_idx, axis=0),
                         pos_bias, axis=0)
+                    
                     if sharding_info["use_role"]:
                         pre_role = layers.fill_constant_batch_size_like(
                             input=pre_mask,
@@ -252,8 +252,9 @@ class Model(ABC):
                             dtype=pre_ids.dtype)
                     else:
                         pre_role = None
-                    #import pdb
-                    #pdb.set_trace()
+
+                    # import pdb
+                    # pdb.set_trace()
                     outputs = {}
                     outputs['enc_out'], _ = self._generation_network(
                         token_ids=pre_ids,
@@ -270,19 +271,20 @@ class Model(ABC):
                     metrics = self.get_metrics(inputs, outputs)
                     self.optimize(metrics)
                     
-                    with open("sharding_program.txt", "w") as f:
-                        f.write(str(fluid.default_main_program()))
-                        print("sharding_program ================")
-            with open("sharding_startup_program.txt", "w") as f:
-                f.write(str(self.sharding_startup_program))
+                    # with open("sharding_program.txt", "w") as f:
+                    #     f.write(str(fluid.default_main_program()))
+                    #     print("sharding_program ================")
+            # with open("sharding_startup_program.txt", "w") as f:
+            #     f.write(str(self.sharding_startup_program))
+            
             self.without_beam_program = self.without_beam_program.clone(for_test=True)
             self.infer_program = self.infer_program.clone(for_test=True)
             # fuse program
-            with open("infer_program_up.txt", "w") as f:
-                f.write(str(self.infer_program))
+            # with open("infer_program_up.txt", "w") as f:
+            #     f.write(str(self.infer_program))
+            with open("without_beam_program.txt", "w") as f:
+                f.write(str(self.without_beam_program))
             replace(self.without_beam_program, self.infer_program)
-            with open("infer_program_down.txt", "w") as f:
-                f.write(str(self.infer_program))
             self.program = self.infer_program
             
         else:

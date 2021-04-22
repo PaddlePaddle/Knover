@@ -113,35 +113,10 @@ class Generator(object):
         # prepare while loop
         # import pdb
         # pdb.set_trace()
-        
-        max_len = layers.fill_constant(
-            shape=[1], dtype="int64", value=self.max_dec_len, force_cpu=True)
-        min_len = layers.fill_constant(
-            shape=[1], dtype="int64", value=self.min_dec_len, force_cpu=True)
-        step_idx = layers.fill_constant(
-            shape=[1], dtype="int64", value=0, force_cpu=True)
-
-        ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
-        pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
-        scores = layers.array_write(inputs["init_score"], step_idx)
-        tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
-        parent_idx = inputs["parent_idx"]
-
         if self.decoding_strategy == "beam_search":
             beam_size = self.beam_size
         else:
             beam_size = 1
-
-        eos_penalty = np.zeros(self.vocab_size, dtype="float32")
-        eos_penalty[self.eos_id] = -1e9
-        eos_penalty = layers.assign(eos_penalty)
-
-        token_penalty = np.zeros(self.vocab_size, dtype="float32")
-        token_penalty[self.unk_id] = -1e9
-        if self.mask_id >= 0:
-            token_penalty[self.mask_id] = -1e9
-        token_penalty = layers.assign(token_penalty)
-
         sharding_info = {
             "decoding_strategy": self.decoding_strategy,
             "beam_size": beam_size,
@@ -161,11 +136,35 @@ class Generator(object):
             "generation_caches": model.generation_caches
         }
 
+        max_len = layers.fill_constant(
+            shape=[1], dtype="int64", value=self.max_dec_len, force_cpu=True)
+        min_len = layers.fill_constant(
+            shape=[1], dtype="int64", value=self.min_dec_len, force_cpu=True)
+        step_idx = layers.fill_constant(
+            shape=[1], dtype="int64", value=0, force_cpu=True)
+
+        ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
+        pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
+        scores = layers.array_write(inputs["init_score"], step_idx)
+        tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
+        parent_idx = inputs["parent_idx"]
+
+        
+
+        eos_penalty = np.zeros(self.vocab_size, dtype="float32")
+        eos_penalty[self.eos_id] = -1e9
+        eos_penalty = layers.assign(eos_penalty)
+
+        token_penalty = np.zeros(self.vocab_size, dtype="float32")
+        token_penalty[self.unk_id] = -1e9
+        if self.mask_id >= 0:
+            token_penalty[self.mask_id] = -1e9
+        token_penalty = layers.assign(token_penalty)
+
+        
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
         while_op = layers.While(cond)
-        # with open("program_pre.txt", "w") as f:
-        #     f.write(str(fluid.default_main_program()))
 
         with while_op.block():
             pre_ids = layers.array_read(array=ids, i=step_idx)
@@ -200,6 +199,9 @@ class Generator(object):
                         dtype=pre_ids.dtype), y=step_idx, axis=0),
                 pos_bias, axis=0)
 
+            with open("_pre_pos.txt" ,"w") as f:
+                f.write(str(fluid.default_main_program())) 
+
             if self.use_role:
                 pre_role = layers.fill_constant_batch_size_like(
                     input=pre_mask,
@@ -208,6 +210,8 @@ class Generator(object):
                     dtype=pre_ids.dtype)
             else:
                 pre_role = None
+            with open("_generation_before.txt" ,"w") as f:
+                f.write(str(fluid.default_main_program())) 
             dec_out, _ = model._generation_network(
                 token_ids=pre_ids,
                 type_ids=pre_sent,
@@ -215,11 +219,18 @@ class Generator(object):
                 role_ids=pre_role,
                 generation_mask=tmp_tgt_generation_mask,
                 gather_idx=parent_idx)
+            with open("_generation_after.txt" ,"w") as f:
+                f.write(str(fluid.default_main_program())) 
+
+            # import pdb
+            # pdb.set_trace()
             logits = model._calc_logits(dec_out)
 
             # ignore unk and mask token
             if self.ignore_unk:
                 logits = layers.elementwise_add(logits, token_penalty, axis=1)
+                with open("_ignore_unk.txt" ,"w") as f:
+                    f.write(str(fluid.default_main_program())) 
 
             # min dec length
             min_len_cond = layers.less_than(x=step_idx, y=min_len)

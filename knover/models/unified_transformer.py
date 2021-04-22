@@ -138,7 +138,6 @@ class UnifiedTransformer(Model):
             param_attr=fluid.ParamAttr(
                 name=self.pos_emb_name, initializer=self.param_initializer))
         emb_out = token_emb_out + type_emb_out + pos_emb_out
-
         if self.use_role:
             role_emb_out = layers.embedding(
                 input=role_ids,
@@ -246,8 +245,11 @@ class UnifiedTransformer(Model):
         Returns:
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
+        # print("================)))))))))))))))")
+        # print(token_ids,type_ids,pos_ids,role_ids,generation_mask,aux_emb,gather_idx)
         emb_out, n_head_self_attn_mask = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
+        # print(emb_out, n_head_self_attn_mask)
         # return self._encode(
         #     emb_out, n_head_self_attn_mask, None,
         #     gather_idx=gather_idx)
@@ -266,6 +268,10 @@ class UnifiedTransformer(Model):
         Returns:
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
+        # print(emb_input,n_head_self_attn_mask,self.n_layer,self.n_head,self.d_key,self.d_value,self.hidden_size,
+        #     self.inner_hidden_size,self.prepostprocess_dropout,self.attention_dropout,self.hidden_act,self.preprocess_cmd,
+        #     self.postprocess_cmd,self.param_initializer,self.epsilon,self.n_layer_per_block,caches,gather_idx)
+        print("================****************")
         return encoder(
             enc_input=emb_input,
             attn_bias=n_head_self_attn_mask,
@@ -344,6 +350,7 @@ class UnifiedTransformer(Model):
                     name="mask_lm_out_fc.w_0",
                     initializer=self.param_initializer),
                 bias_attr=seq_out_bias_attr)
+        # print("logits: ", logits)
         return logits
 
     def _get_feed_dict(self, is_infer=False):
@@ -471,9 +478,9 @@ class UnifiedTransformer(Model):
         """Run generation."""
         batch_size = self._get_batch_size(inputs)
         inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
-        with open("run_generation_outputprogram_before.txt", "w") as f:
-            f.write(str(self.infer_program))
-            print("gen_output_program_____________________")
+        # with open("run_generation_outputprogram_before.txt", "w") as f:
+        #     f.write(str(self.infer_program))
+        #     print("gen_output_program_____________________")
             
         outputs = self._execute(
             self.infer_program,

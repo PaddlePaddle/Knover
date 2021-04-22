@@ -138,7 +138,6 @@ class UnifiedTransformer(Model):
             param_attr=fluid.ParamAttr(
                 name=self.pos_emb_name, initializer=self.param_initializer))
         emb_out = token_emb_out + type_emb_out + pos_emb_out
-
         if self.use_role:
             role_emb_out = layers.embedding(
                 input=role_ids,
@@ -248,9 +247,10 @@ class UnifiedTransformer(Model):
         """
         emb_out, n_head_self_attn_mask = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
+
         return self._encode(
-            emb_out, n_head_self_attn_mask, self.generation_caches,
-            gather_idx=gather_idx)
+           emb_out, n_head_self_attn_mask, self.generation_caches,
+           gather_idx=gather_idx)
 
     def _encode(self, emb_input, n_head_self_attn_mask, caches=None, gather_idx=None):
         """Run Transformer encode pass.
@@ -369,13 +369,14 @@ class UnifiedTransformer(Model):
                 name="tgt_ids", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
             feed_dict["tgt_pos"] = layers.data(
                 name="tgt_pos", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
-            feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
-            feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
-
+            feed_dict["init_score"] = layers.data(
+                name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
+            feed_dict["parent_idx"] = layers.data(
+                name="parent_idx", shape=[-1], dtype="int64")
             feed_dict["tgt_generation_mask"] = layers.data(
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
-
-            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+            feed_dict["data_id"] = layers.data(
+                name="data_id", shape=[-1, 1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
@@ -463,6 +464,7 @@ class UnifiedTransformer(Model):
         """Run generation."""
         batch_size = self._get_batch_size(inputs)
         inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
+            
         outputs = self._execute(
             self.infer_program,
             inputs,

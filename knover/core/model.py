@@ -15,16 +15,21 @@
 
 from abc import abstractmethod, ABC
 import os
+import numpy as np
 
 import paddle.fluid as fluid
-from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
-import paddle.fluid.incubate.fleet.base.role_maker as role_maker
+#from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
+#import paddle.fluid.incubate.fleet.base.role_maker as role_maker
+import paddle.distributed.fleet as fleet
 import paddle.fluid.layers as layers
 
 import knover.optim
 import knover.optim.lr_scheduler as lr_scheduler
 from knover.utils import to_lodtensor, get_tensor
 from knover.utils.args import str2bool
+
+from knover.core.split_program import replace
+from knover.core.split_program import find_op_idx
 
 
 class Model(ABC):
@@ -110,21 +115,15 @@ class Model(ABC):
 
     def _init_distributed_strategy(self):
         """Initialize distributed strategy."""
-        exec_strategy = fluid.ExecutionStrategy()
-        exec_strategy.use_experimental_executor = True
-        exec_strategy.num_threads = 4
-        exec_strategy.num_iteration_per_drop_scope = 1
+        dist_strategy = fleet.DistributedStrategy()
+        
+        dist_strategy.sharding = True
+        dist_strategy.sharding_configs = {
+            "fuse_broadcast_MB": 32,
+            "hybrid_dp": False,
+            "sharding_group_size": 2
+        }
 
-        dist_strategy = DistributedStrategy()
-        dist_strategy.exec_strategy = exec_strategy
-        dist_strategy.nccl_comm_num = 1
-        dist_strategy.fuse_all_reduce_ops = True
-        if self.use_recompute:
-            dist_strategy.forward_recompute = True
-            dist_strategy.enable_sequential_execution = True
-        if self.use_amp:
-            dist_strategy.use_amp = True
-            dist_strategy.amp_loss_scaling = self.amp_loss_scaling
         self.dist_strategy = dist_strategy
         return
 
@@ -144,17 +143,118 @@ class Model(ABC):
         """
         self.startup_program = fluid.Program()
         if self.run_infer:
+            self.is_distributed = True
+            if self.is_distributed:
+                self._init_distributed_strategy()
             # build inference program
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)
-                    predictions = self.infer(inputs, outputs)
+                    outputs = self.forward(inputs, is_infer=True)               
+                    generation_caches_tmp = list()
+                    for cache in self.generation_caches:
+                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})     
+                    predictions, sharding_info = self.infer(inputs, outputs)
                     self.infer_fetch_dict = predictions
-            self.infer_program = self.infer_program.clone(for_test=True)
 
+            # sharding for forward_program
+            self.forward_program = fluid.Program()
+            with fluid.program_guard(self.forward_program, self.startup_program):
+                with fluid.unique_name.guard():
+                    self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
+                    outputs = self.forward(inputs, is_infer=True)
+            replace(self.forward_program, self.infer_program, src_block_id=0, dst_block_id=1)
+
+            # sharding for without_beam_program
+            self.generation_caches = generation_caches_tmp
+            self.without_beam_program = fluid.Program()
+            for cache in self.generation_caches:
+                # copy original cache into the sharding program
+                self.without_beam_program.block(0)._clone_variable(cache["k"], False)
+                self.without_beam_program.block(0)._clone_variable(cache["v"], False)
+
+            with fluid.program_guard(self.without_beam_program, self.startup_program):
+                with fluid.unique_name.guard():
+                    inputs = self._get_feed_dict(is_infer=True)
+                    inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+                    inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
+                    max_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["max_dec_len"], force_cpu=True)
+                    min_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["min_dec_len"], force_cpu=True)
+                    step_idx = layers.fill_constant(shape=[1], dtype="int64", value=0, force_cpu=True)
+                    ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
+                    pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
+                    scores = layers.array_write(inputs["init_score"], step_idx)
+                    tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
+                    parent_idx = inputs["parent_idx"]
+                    eos_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
+                    eos_penalty[sharding_info["eos_id"]] = -1e9
+                    eos_penalty = layers.assign(eos_penalty)
+
+                    token_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
+                    token_penalty[sharding_info["unk_id"]] = -1e9
+                    if sharding_info["mask_id"] >= 0:
+                        token_penalty[sharding_info["mask_id"]] = -1e9
+                    token_penalty = layers.assign(token_penalty)
+                    # start while loop
+                    # cond = layers.less_than(x=step_idx, y=max_len)
+                    # while_op = layers.While(cond)
+                    # # with while_op.block():
+                    pre_ids = layers.array_read(array=ids, i=step_idx)
+                    pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
+                    pre_scores = layers.array_read(array=scores, i=step_idx)
+                    pos_bias = layers.array_read(array=pos_biases, i=step_idx)
+                    pos_bias = layers.gather(input=pos_bias, index=parent_idx)
+                    tmp_tgt_generation_mask = layers.array_read(tgt_generation_mask, i=step_idx)
+                    dtype = tmp_tgt_generation_mask.dtype
+                    append_mask = layers.fill_constant_batch_size_like(
+                            input=pre_ids,
+                            value=1.0,
+                            shape=[-1, 1, 1],
+                            dtype=dtype)
+                    tmp_tgt_generation_mask = layers.concat([tmp_tgt_generation_mask, append_mask], axis=2)
+                    pre_mask = tmp_tgt_generation_mask = layers.gather(input=tmp_tgt_generation_mask, index=parent_idx)
+                    pre_sent = layers.fill_constant_batch_size_like(
+                            input=pre_mask,
+                            value=1,
+                            shape=[-1, 1, 1],
+                            dtype=pre_ids.dtype)
+
+                    pre_pos = layers.elementwise_add(
+                        layers.elementwise_mul(
+                            x=layers.fill_constant_batch_size_like(
+                                input=pre_mask,
+                                value=1,
+                                shape=[-1, 1, 1],
+                                dtype=pre_ids.dtype), y=step_idx, axis=0),
+                        pos_bias, axis=0)
+                    
+                    if sharding_info["use_role"]:
+                        pre_role = layers.fill_constant_batch_size_like(
+                            input=pre_mask,
+                            value=0,
+                            shape=[-1, 1, 1],
+                            dtype=pre_ids.dtype)
+                    else:
+                        pre_role = None
+                    outputs = {}
+                    outputs['enc_out'], _ = self._generation_network(
+                        token_ids=pre_ids,
+                        type_ids=pre_sent,
+                        pos_ids=pre_pos,
+                        role_ids=pre_role,
+                        generation_mask=tmp_tgt_generation_mask,
+                        gather_idx=parent_idx)
+
+                    metrics = self.get_metrics(inputs, outputs)
+                    self.optimize(metrics)
+                    
+            
+            self.without_beam_program = self.without_beam_program.clone(for_test=True)
+            self.infer_program = self.infer_program.clone(for_test=True)            
+            replace(self.without_beam_program, self.infer_program)
             self.program = self.infer_program
+            
         else:
             # initialize distributed setting
             if self.is_distributed:
@@ -185,8 +285,7 @@ class Model(ABC):
                     self.train_fetch_dict = metrics
 
             self.program = self.train_program
-            if self.is_distributed:
-                self.train_program = fleet.main_program
+
 
         # initialize model
         self.exe.run(self.startup_program)

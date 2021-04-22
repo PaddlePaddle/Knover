@@ -11,12 +11,14 @@ fi
 
 export FLAGS_sync_nccl_allreduce=1
 export FLAGS_fuse_parameter_memory_size=64
+export PYTHONPATH=/home/liji09/toyer/Knover
+
 
 mkdir -p ${save_path}
 
 if [[ ${nsp_init_params:-""} != "" ]]; then
     if [[ ! -e "${nsp_init_params}/__model__" ]]; then
-        python -m \
+        python -m paddle.distributed.launch python -m \
             knover.scripts.save_inference_model \
             --model NSPModel \
             --task NextSentencePrediction \
@@ -28,9 +30,10 @@ if [[ ${nsp_init_params:-""} != "" ]]; then
     fi
     infer_args="${infer_args} --nsp_inference_model_path ${nsp_init_params}"
 fi
-
-python -m \
-    knover.scripts.infer \
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+python -m paddle.distributed.launch \
+    ./knover/scripts/infer.py \
+    --is_distributed True \
     --model ${model:-"Plato"} \
     --task ${task:-"DialogGeneration"} \
     --vocab_path ${vocab_path} \

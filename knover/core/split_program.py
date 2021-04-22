@@ -3,11 +3,28 @@ import paddle.fluid.layers as layers
 import paddle.fluid as fluid
 import paddle.fluid.core as core
 
+# 取出src_block里的op所有vars，dst_block里面的var如果不在vars就去除该op
+def clean_redundancy(src_block, dst_block):
+    effective_var = []
+    for i in range(src_block.num_blocks):
+        block = src_block.block(i)
+        for op in block.ops:
+            var_names= op.desc.input_arg_names() + op.desc.output_arg_names()
+            effective_var.extend(var_names)
+    for i in range(dst_block.num_blocks):
+        block = dst_block.block(i)   
+        for indx, op in reversed(list(enumerate(block.ops))):
+            if op.type in ["c_gen_nccl_id", "c_comm_init"]:
+                continue
+            var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
+            for var_name in var_names:
+                if var_name not in effective_var:
+                    block._remove_op(indx)
 
 def find_op_idx(block, var_name, as_input=False):
     for idx, op in enumerate(list(block.ops)):
-        in_names = op.desc.input_arg_names
-        out_names = op.desc.output_arg_names
+        in_names = op.desc.input_arg_names()
+        out_names = op.desc.output_arg_names()
         if as_input and var_name in in_names: return idx
         if not as_input and var_name in out_names: return idx
     raise ValueError("Cannot find a op in block which takes {} as input or output.".format(var_name))

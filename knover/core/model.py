@@ -28,8 +28,7 @@ import knover.optim.lr_scheduler as lr_scheduler
 from knover.utils import to_lodtensor, get_tensor
 from knover.utils.args import str2bool
 
-from knover.core.split_program import replace
-from knover.core.split_program import find_op_idx
+from knover.core.split_program import replace, find_op_idx, clean_redundancy
 
 
 class Model(ABC):
@@ -248,11 +247,14 @@ class Model(ABC):
 
                     metrics = self.get_metrics(inputs, outputs)
                     self.optimize(metrics)
-                    
             
             self.without_beam_program = self.without_beam_program.clone(for_test=True)
             self.infer_program = self.infer_program.clone(for_test=True)            
             replace(self.without_beam_program, self.infer_program)
+
+            # 拿出所有infer的op的vars，删除掉startup_program的冗余vars
+            clean_redundancy(self.infer_program, self.startup_program)
+                    
             self.program = self.infer_program
             
         else:

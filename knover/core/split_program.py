@@ -2,7 +2,7 @@ import paddle.distributed.fleet as fleet
 import paddle.fluid.layers as layers
 import paddle.fluid as fluid
 import paddle.fluid.core as core
-from paddle import compat as cpt
+
 
 def find_op_idx(block, var_name, as_input=False):
     for idx, op in enumerate(list(block.ops)):

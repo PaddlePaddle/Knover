@@ -29,6 +29,7 @@ from knover.utils import to_lodtensor, get_tensor
 from knover.utils.args import str2bool
 
 from knover.core.split_program import replace
+from knover.core.split_program import find_op_idx
 
 
 class Model(ABC):
@@ -114,11 +115,6 @@ class Model(ABC):
 
     def _init_distributed_strategy(self):
         """Initialize distributed strategy."""
-        # exec_strategy = fluid.ExecutionStrategy()
-        # exec_strategy.use_experimental_executor = True
-        # exec_strategy.num_threads = 4
-        # exec_strategy.num_iteration_per_drop_scope = 1
-
         dist_strategy = fleet.DistributedStrategy()
         
         dist_strategy.sharding = True
@@ -127,15 +123,7 @@ class Model(ABC):
             "hybrid_dp": False,
             "sharding_group_size": 2
         }
-        # dist_strategy.exec_strategy = exec_strategy
-        # dist_strategy.nccl_comm_num = 1
-        # dist_strategy.fuse_all_reduce_ops = True
-        # if self.use_recompute:
-        #     dist_strategy.forward_recompute = True
-        #     dist_strategy.enable_sequential_execution = True
-        # if self.use_amp:
-        #     dist_strategy.use_amp = True
-        #     dist_strategy.amp_loss_scaling = self.amp_loss_scaling
+
         self.dist_strategy = dist_strategy
         return
 
@@ -159,8 +147,6 @@ class Model(ABC):
             if self.is_distributed:
                 self._init_distributed_strategy()
             # build inference program
-            # import pdb
-            # pdb.set_trace()
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
@@ -168,27 +154,26 @@ class Model(ABC):
                     outputs = self.forward(inputs, is_infer=True)               
                     generation_caches_tmp = list()
                     for cache in self.generation_caches:
-                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})    
-                    # print(generation_caches_tmp)          
+                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})     
                     predictions, sharding_info = self.infer(inputs, outputs)
-                    # print(generation_caches_tmp)
                     self.infer_fetch_dict = predictions
-            with open("origin_startup_program.txt", "w") as f:
-                f.write(str(self.startup_program))
 
-
+            # sharding for forward_program
+            self.forward_program = fluid.Program()
+            with fluid.program_guard(self.forward_program, self.startup_program):
+                with fluid.unique_name.guard():
+                    self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
+                    outputs = self.forward(inputs, is_infer=True)
+            replace(self.forward_program, self.infer_program, src_block_id=0, dst_block_id=1)
             # sharding for without_beam_program
-            # import pdb
-            # pdb.set_trace()
             self.generation_caches = generation_caches_tmp
-            # print(self.generation_caches)
             self.without_beam_program = fluid.Program()
-            self.sharding_startup_program = fluid.Program()
             for cache in self.generation_caches:
+                # copy cache into the sharding program
                 # 将cache里的内容拷贝到sharding的program
                 self.without_beam_program.block(0)._clone_variable(cache["k"], False)
                 self.without_beam_program.block(0)._clone_variable(cache["v"], False)
-            with fluid.program_guard(self.without_beam_program, self.sharding_startup_program):
+            with fluid.program_guard(self.without_beam_program, self.startup_program):
                 with fluid.unique_name.guard():
                     inputs = self._get_feed_dict(is_infer=True)
                     inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
@@ -274,16 +259,17 @@ class Model(ABC):
                     # with open("sharding_program.txt", "w") as f:
                     #     f.write(str(fluid.default_main_program()))
                     #     print("sharding_program ================")
-            # with open("sharding_startup_program.txt", "w") as f:
-            #     f.write(str(self.sharding_startup_program))
+            with open("sharding_startup_program.txt", "w") as f:
+                f.write(str(self.without_beam_program))
             
             self.without_beam_program = self.without_beam_program.clone(for_test=True)
             self.infer_program = self.infer_program.clone(for_test=True)
             # fuse program
             # with open("infer_program_up.txt", "w") as f:
             #     f.write(str(self.infer_program))
-            with open("without_beam_program.txt", "w") as f:
-                f.write(str(self.without_beam_program))
+            # with open("without_beam_program.txt", "w") as f:
+            #     f.write(str(self.without_beam_program))
+            
             replace(self.without_beam_program, self.infer_program)
             self.program = self.infer_program
             
@@ -317,11 +303,12 @@ class Model(ABC):
                     self.train_fetch_dict = metrics
 
             self.program = self.train_program
-            if self.is_distributed:
-                self.train_program = fleet.main_program
+
 
         # initialize model
         self.exe.run(self.startup_program)
+        with open("infer_startup_program.txt", "w") as f:
+            f.write(str(self.startup_program))
         if self.init_pretraining_params != "":
             self.load(self.init_pretraining_params)
         elif self.init_checkpoint != "":

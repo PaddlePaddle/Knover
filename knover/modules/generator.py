@@ -15,6 +15,7 @@
 
 import numpy as np
 import paddle.fluid.layers as layers
+from paddle import fluid
 
 from knover.utils import str2bool
 
@@ -94,6 +95,7 @@ class Generator(object):
         self.beam_size = args.beam_size
         self.length_penalty = args.length_penalty
         self.length_average = args.length_average
+        self.is_distributed = args.get("is_distributed", False)
         return
 
     def inference(self, model, inputs, outputs):
@@ -109,6 +111,29 @@ class Generator(object):
             predictions: A dict mapping keys to corresponding predictions.
         """
         # prepare while loop
+        if self.decoding_strategy == "beam_search":
+            beam_size = self.beam_size
+        else:
+            beam_size = 1
+        sharding_info = {
+            "decoding_strategy": self.decoding_strategy,
+            "beam_size": beam_size,
+            "mask_id": self.mask_id,
+            "vocab_size": self.vocab_size,
+            "eos_id": self.eos_id,
+            "unk_id": self.unk_id,
+            "use_role": self.use_role, 
+            "ignore_unk": self.ignore_unk,
+            "length_average": self.length_average,
+            "length_penalty": self.length_penalty,
+            "temperature": self.temperature,
+            "topp": self.topp,
+            "topk": self.topk,
+            "max_dec_len": self.max_dec_len,
+            "min_dec_len": self.min_dec_len,
+            "generation_caches": model.generation_caches
+        }
+
         max_len = layers.fill_constant(
             shape=[1], dtype="int64", value=self.max_dec_len, force_cpu=True)
         min_len = layers.fill_constant(
@@ -122,10 +147,7 @@ class Generator(object):
         tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
         parent_idx = inputs["parent_idx"]
 
-        if self.decoding_strategy == "beam_search":
-            beam_size = self.beam_size
-        else:
-            beam_size = 1
+        
 
         eos_penalty = np.zeros(self.vocab_size, dtype="float32")
         eos_penalty[self.eos_id] = -1e9
@@ -137,9 +159,11 @@ class Generator(object):
             token_penalty[self.mask_id] = -1e9
         token_penalty = layers.assign(token_penalty)
 
+        
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
         while_op = layers.While(cond)
+
         with while_op.block():
             pre_ids = layers.array_read(array=ids, i=step_idx)
             pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
@@ -189,6 +213,7 @@ class Generator(object):
                 role_ids=pre_role,
                 generation_mask=tmp_tgt_generation_mask,
                 gather_idx=parent_idx)
+
             logits = model._calc_logits(dec_out)
 
             # ignore unk and mask token
@@ -293,14 +318,14 @@ class Generator(object):
             length_cond = layers.less_than(x=step_idx, y=max_len)
             finish_cond = layers.logical_not(layers.is_empty(x=selected_ids))
             layers.logical_and(x=length_cond, y=finish_cond, out=cond)
-
-        finished_ids, finished_scores = layers.beam_search_decode(
-            ids, scores, beam_size=beam_size, end_id=self.eos_id)
-
+       
+        finished_ids, finished_scores = layers.beam_search_decode(ids, scores, beam_size=beam_size, end_id=self.eos_id)
+        
         predictions = {
             "finished_ids": finished_ids,
             "finished_scores": finished_scores,
             "token_ids": inputs["token_ids"],
             "data_id": inputs["data_id"]
         }
-        return predictions
+        
+        return predictions, sharding_info

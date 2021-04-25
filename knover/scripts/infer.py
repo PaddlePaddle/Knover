@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference main program."""
-
 import argparse
 from collections import defaultdict
 import json
@@ -54,13 +53,14 @@ def infer(args):
     if args.is_distributed:
         dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
+        # gpu_id = int(0)
         phase = "distributed_test"
     else:
         dev_count = 1
-        gpu_id = 0
+        # gpu_id = int(os.getenv("FLAGS_selected_gpus"))
+        gpu_id = int(0)
         phase = "test"
     place = fluid.CUDAPlace(gpu_id)
-
     task = tasks.create_task(args)
     model = models.create_model(args, place)
     infer_generator = task.get_data_loader(
@@ -101,7 +101,7 @@ def infer(args):
             pass
 
     # Only run on master GPU in each node
-    if gpu_id != 0:
+    if gpu_id != 1:
         return
 
     if args.is_distributed:
@@ -131,10 +131,24 @@ def infer(args):
 
     return
 
-
+#from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
+#import paddle.fluid.incubate.fleet.base.role_maker as role_maker
+import paddle.distributed.fleet as fleet
 if __name__ == "__main__":
     if hasattr(paddle, "enable_static"):
         paddle.enable_static()
+    # if args.is_distributed:
+    #role = role_maker.PaddleCloudRoleMaker(is_collective=True)
+    
+    fleet.init(is_collective=True)
+    dev_count = fluid.core.get_cuda_device_count()
     args = setup_args()
+    if args.is_distributed:      
+        gpu_id = int(os.getenv("FLAGS_selected_gpus"))
+    else:
+        gpu_id = int(0)
+    # gpu_id = int(0)
+    trainers_num = fleet.worker_num()
+    trainer_id = fleet.worker_index()
     check_cuda(True)
     infer(args)

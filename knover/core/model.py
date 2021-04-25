@@ -150,45 +150,41 @@ class Model(ABC):
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)
-                    forward_start_idx = find_op_idx(fluid.default_main_program().block(0), inputs["pos_ids"].name, as_input=True)
-                    forward_end_idx = find_op_idx(fluid.default_main_program().block(0), outputs["enc_out"].name, as_input=False)               
+                    outputs = self.forward(inputs, is_infer=True)             
                     generation_caches_tmp = list()
                     for cache in self.generation_caches:
                         generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})     
                     predictions, sharding_info = self.infer(inputs, outputs)
-                    infer_start_idx = find_op_idx(fluid.default_main_program().block(1), "array_read_0.tmp_0", as_input=False)
-                    infer_end_idx = find_op_idx(fluid.default_main_program().block(1), sharding_info["dec_out"].name, as_input=False)
                     self.infer_fetch_dict = predictions
+ 
 
 
             # sharding for forward_program
-            self.forward_program = fluid.Program()
-            with fluid.program_guard(self.forward_program, self.startup_program):
+            forward_program = fluid.Program()
+            with fluid.program_guard(forward_program, self.startup_program):
                 with fluid.unique_name.guard():
                     inputs = self._get_feed_dict(is_infer=True)
                     inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-                    inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")                  
+                    inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")                    
                     outputs = self.forward(inputs, is_infer=True)
                     metrics = self.get_metrics(inputs, outputs)
                     self.optimize(metrics)
-                    forward_sharding_start_idx = find_op_idx(fluid.default_main_program().block(0), inputs["pos_ids"].name, as_input=True)
-                    forward_sharding_end_idx = find_op_idx(fluid.default_main_program().block(0), outputs["enc_out"].name, as_input=False)
-            
-            replace(self.forward_program, self.infer_program, src_block_id=0, dst_block_id=0,\
-                src_block_start_op_idx=forward_sharding_start_idx, src_block_end_op_idx=None,
-                dst_block_start_op_idx=forward_start_idx, dst_block_end_op_idx=None
+                    
+            forward_program = forward_program.clone(for_test=True)
+            replace(forward_program, self.infer_program, src_block_id=0, dst_block_id=0,\
+                src_block_start_op_idx=0, src_block_end_op_idx=None,
+                dst_block_start_op_idx=0, dst_block_end_op_idx=None
                 )
 
             # sharding for without_beam_program
             self.generation_caches = generation_caches_tmp
-            self.without_beam_program = fluid.Program()
+            without_beam_program = fluid.Program()
             for cache in self.generation_caches:
                 # copy original cache into the sharding program
-                self.without_beam_program.block(0)._clone_variable(cache["k"], False)
-                self.without_beam_program.block(0)._clone_variable(cache["v"], False)
+                without_beam_program.block(0)._clone_variable(cache["k"], False)
+                without_beam_program.block(0)._clone_variable(cache["v"], False)
 
-            with fluid.program_guard(self.without_beam_program, self.startup_program):
+            with fluid.program_guard(without_beam_program, self.startup_program):
                 with fluid.unique_name.guard():
                     inputs = self._get_feed_dict(is_infer=True)
                     inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
@@ -259,23 +255,20 @@ class Model(ABC):
                         role_ids=pre_role,
                         generation_mask=tmp_tgt_generation_mask,
                         gather_idx=parent_idx)
-                    infer_sharding_start_idx = find_op_idx(fluid.default_main_program().block(0), "array_read_0.tmp_0", as_input=False)
-                    infer_sharding_end_idx = find_op_idx(fluid.default_main_program().block(0), outputs['enc_out'].name, as_input=False)
-                   
+                       
                     metrics = self.get_metrics(inputs, outputs)
                     self.optimize(metrics)
 
-            self.without_beam_program = self.without_beam_program.clone(for_test=True)
+            without_beam_program = without_beam_program.clone(for_test=True)
             self.infer_program = self.infer_program.clone(for_test=True)            
-  
-            replace(self.without_beam_program, self.infer_program, \
-                src_block_start_op_idx=12, src_block_end_op_idx=infer_sharding_end_idx,\
-                dst_block_start_op_idx=0, dst_block_end_op_idx=infer_end_idx
+            replace(without_beam_program, self.infer_program, \
+                src_block_id=0, dst_block_id=1, \
+                src_block_start_op_idx=11, src_block_end_op_idx=None,\
+                dst_block_start_op_idx=0, dst_block_end_op_idx=None
                     )
 
             # 拿出所有infer的op的vars，删除掉startup_program的冗余vars
             clean_redundancy(self.infer_program, self.startup_program)
-                    
             self.program = self.infer_program
             
         else:

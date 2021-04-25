@@ -5,6 +5,7 @@ import paddle.fluid.core as core
 
 # 取出src_block里的op所有vars，dst_block里面的var如果不在vars就去除该op
 def clean_redundancy(src_block, dst_block):
+    removed_vars = set()
     effective_var = []
     for i in range(src_block.num_blocks):
         block = src_block.block(i)
@@ -19,11 +20,16 @@ def clean_redundancy(src_block, dst_block):
             var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
             for var_name in var_names:
                 if var_name not in effective_var:
+                    if var_name not in removed_vars:                        
+                        block._remove_var(var_name)
+                        removed_vars.add(var_name)
                     block._remove_op(indx)
 
 def find_op_idx(block, var_name, as_input=False):
-    for idx, op in enumerate(list(block.ops)):
+    # print("var_name: ", var_name)
+    for idx, op in enumerate(block.ops):
         in_names = op.desc.input_arg_names()
+        # print(in_names)
         out_names = op.desc.output_arg_names()
         if as_input and var_name in in_names: return idx
         if not as_input and var_name in out_names: return idx
@@ -52,7 +58,7 @@ def op_outputs(op, src_block, dst_block):
             if not dst_block._find_var_recursive(var_name):
                 create_var([var_name], src_block, dst_block)
             val = dst_block._var_recursive(var_name)
-            outputs[param_name].append(val)
+            outputs[param_name].append(val) # 这边需要param_name, 不然就直接op.desc.input_arg_names
 
     return outputs
 
@@ -89,13 +95,19 @@ def create_var(vars, src_block, dst_block, should_rename=False):
 def replace(src_program,
             dst_program,
             src_block_id=0,
-            dst_block_id=1,
-            src_block_start_op_idx=12,
-            src_block_end_op_idx=100,
+            dst_block_id=0,
+            src_block_start_op_idx=None,
+            src_block_end_op_idx=None,
             dst_block_start_op_idx=None,
-            dst_block_end_op_idx=None):
+            dst_block_end_op_idx=None
+            # src_ops=None
+            ):
     src_block = src_program.block(src_block_id)
     dst_block = dst_program.block(dst_block_id)
+    with open("src_{}.txt".format(fleet.worker_index()), "w") as f:
+        f.write(str(src_program))
+    with open("dst_{}.txt".format(fleet.worker_index()), "w") as f:
+        f.write(str(dst_program))
     src_ops = src_block.ops
     dst_ops = dst_block.ops
     if src_block_start_op_idx is None:
@@ -109,8 +121,20 @@ def replace(src_program,
     
     dst_op_idx = dst_block_start_op_idx
     copied_op_num = 0
+    print("=================")
+    print("len src_ops", len(src_ops))
+    print("len dst_ops", len(dst_ops))
+    print("src_block_id", src_block_id)
+    print("dst_block_id", dst_block_id)
+    print("src_block_start_op_idx: ", src_block_start_op_idx)
+    print("src_block_end_op_idx: ", src_block_end_op_idx)
+    print("dst_block_start_op_idx: ", dst_block_start_op_idx)
+    print("dst_block_end_op_idx: ", dst_block_end_op_idx)
+    len_nums = 0
+    dst_idx = 0
     for i in range(src_block_start_op_idx, src_block_end_op_idx):
         src_op = src_block.ops[i]
+        # src_op = src_ops[i]
         if src_op.type in ["c_sync_calc_stream",
                            "c_sync_comm_stream",
                            "c_broadcast"] or (
@@ -124,14 +148,23 @@ def replace(src_program,
                 inputs=op_inputs(src_op, src_block, dst_block),
                 outputs=op_outputs(src_op, src_block, dst_block))
             dst_op_idx += 1
+            len_nums += 1
             continue 
         dst_op = dst_block.ops[dst_op_idx]
         #FIXME:
-        if src_op.type != dst_op.type:           
+        if src_op.type != dst_op.type:
+            print("src_i", i)     
+            print("dst_i", dst_idx)      
+            print("src_op.type: ", src_op.type)
+            print("dst_op.type: ", dst_op.type)
+            print("dst_op_idx: ", dst_op_idx)
             break
         assert src_op.type == dst_op.type, ("src_op {} does not match dst_op:"
                 " {}".format(src_op.type, dst_op.type))
+        dst_idx += 1
         dst_op_idx += 1
+        len_nums += 1
 
-    
+    print("len_nums: ", len_nums)
+    print("=======================")
     return

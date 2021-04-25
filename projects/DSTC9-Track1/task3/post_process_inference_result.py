@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 
 def setup_args():
+    """Setup arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--in_file", type=str, required=True)
     parser.add_argument("--pred_file", type=str, required=True)
@@ -18,6 +19,7 @@ def setup_args():
 
 
 def main(args):
+    """Main function."""
     with open(args.in_file) as in_f, open(args.pred_file) as pred_f, open(args.out_file, "w") as out_f:
         preds = json.load(in_f)
         for pred in tqdm(preds, desc="Post-process task3 inference result"):

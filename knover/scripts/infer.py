@@ -25,8 +25,7 @@ import paddle.fluid as fluid
 
 import knover.models as models
 import knover.tasks as tasks
-from knover.utils import check_cuda, Timer
-from knover.utils.args import parse_args, str2bool
+from knover.utils import check_cuda, parse_args, str2bool, Timer
 
 
 def setup_args():
@@ -76,7 +75,7 @@ def infer(args):
     timer = Timer()
     timer.start()
     infer_out = {}
-    step = 0
+    step = 0 # fix no input data case.
     for step, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
         for pred in predictions:

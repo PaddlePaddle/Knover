@@ -69,3 +69,4 @@ def add_cmdline_args(parser):
 import knover.models.classifier
 import knover.models.nsp_model
 import knover.models.plato
+import knover.models.unified_transformer

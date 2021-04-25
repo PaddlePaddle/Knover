@@ -113,12 +113,6 @@ class Generator(object):
         min_len = layers.fill_constant([1], "int64", self.min_dec_len, force_cpu=True)
         step_idx = layers.fill_constant([1], "int64", 0, force_cpu=True)
 
-        ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
-        pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
-        scores = layers.array_write(inputs["init_score"], step_idx)
-        tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
-        parent_idx = inputs["parent_idx"]
-
         if self.decoding_strategy == "beam_search":
             beam_size = self.beam_size
         else:
@@ -134,58 +128,14 @@ class Generator(object):
             token_penalty[self.mask_id] = -1e9
         token_penalty = layers.assign(token_penalty)
 
+        state = model._initialize_state(inputs, step_idx)
+
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
         while_op = layers.While(cond)
         with while_op.block():
-            pre_ids = layers.array_read(array=ids, i=step_idx)
-            pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
-            pre_scores = layers.array_read(array=scores, i=step_idx)
-            pos_bias = layers.array_read(array=pos_biases, i=step_idx)
-            pos_bias = layers.gather(input=pos_bias, index=parent_idx)
-
-            tmp_tgt_generation_mask = layers.array_read(tgt_generation_mask, i=step_idx)
-            dtype = tmp_tgt_generation_mask.dtype
-
-            append_mask = layers.fill_constant_batch_size_like(
-                    input=pre_ids,
-                    value=1.0,
-                    shape=[-1, 1, 1],
-                    dtype=dtype)
-            tmp_tgt_generation_mask = layers.concat([tmp_tgt_generation_mask, append_mask], axis=2)
-            pre_mask = tmp_tgt_generation_mask = layers.gather(input=tmp_tgt_generation_mask, index=parent_idx)
-
-            pre_sent = layers.fill_constant_batch_size_like(
-                    input=pre_mask,
-                    value=1,
-                    shape=[-1, 1, 1],
-                    dtype=pre_ids.dtype)
-
-            pre_pos = layers.elementwise_add(
-                layers.elementwise_mul(
-                    x=layers.fill_constant_batch_size_like(
-                        input=pre_mask,
-                        value=1,
-                        shape=[-1, 1, 1],
-                        dtype=pre_ids.dtype), y=step_idx, axis=0),
-                pos_bias, axis=0)
-
-            if self.use_role:
-                pre_role = layers.fill_constant_batch_size_like(
-                    input=pre_mask,
-                    value=0,
-                    shape=[-1, 1, 1],
-                    dtype=pre_ids.dtype)
-            else:
-                pre_role = None
-
-            dec_out, _ = model._generation_network(
-                token_ids=pre_ids,
-                type_ids=pre_sent,
-                pos_ids=pre_pos,
-                role_ids=pre_role,
-                generation_mask=tmp_tgt_generation_mask,
-                gather_idx=parent_idx)
+            model_input, pre_ids, pre_scores = model._prepare_timestep_input(state, step_idx)
+            dec_out, _ = model._generation_network(**model_input)
             logits = model._calc_logits(dec_out)
 
             # ignore unk and mask token
@@ -266,7 +216,7 @@ class Generator(object):
                     x=layers.log(topk_scores), y=pre_scores, axis=0)
             topk_indices = layers.lod_reset(topk_indices, pre_ids)
             accu_scores = layers.lod_reset(accu_scores, pre_ids)
-            selected_ids, selected_scores, gather_idx = layers.beam_search(
+            selected_ids, selected_scores, parent_idx = layers.beam_search(
                 pre_ids=pre_ids,
                 pre_scores=pre_scores,
                 ids=topk_indices,
@@ -275,19 +225,20 @@ class Generator(object):
                 end_id=self.eos_id,
                 return_parent_idx=True)
 
-            layers.array_write(selected_ids, i=step_idx, array=ids)
-            layers.array_write(selected_scores, i=step_idx, array=scores)
-            layers.array_write(pre_mask, i=step_idx, array=tgt_generation_mask)
-            layers.array_write(pos_bias, i=step_idx, array=pos_biases)
-
-            layers.assign(gather_idx, parent_idx)
+            state = model._update_state(
+                state,
+                model_input,
+                selected_ids,
+                selected_scores,
+                parent_idx,
+                step_idx)
 
             length_cond = layers.less_than(x=step_idx, y=max_len)
             finish_cond = layers.logical_not(layers.is_empty(x=selected_ids))
             layers.logical_and(x=length_cond, y=finish_cond, out=cond)
 
         finished_ids, finished_scores = layers.beam_search_decode(
-            ids, scores, beam_size=beam_size, end_id=self.eos_id)
+            state["tgt_ids"], state["scores"], beam_size=beam_size, end_id=self.eos_id)
 
         predictions = {
             "finished_ids": finished_ids,

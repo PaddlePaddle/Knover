@@ -36,7 +36,7 @@ def setup_args():
 def main(args):
     """Tokenization main process."""
     tokenizer = SentencePieceTokenizer(args)
-    tokenized_fields = ["src", "tgt"]
+    tokenized_fields = ["src", "tgt", "knowledge"]
     with open(args.input_file) as fp, open(args.output_file, "w") as output_fp:
         headers = next(fp).rstrip("\n").split("\t")
         output_fp.write("\t".join(headers) + "\n")

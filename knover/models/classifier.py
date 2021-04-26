@@ -19,7 +19,6 @@ import paddle.fluid.layers as layers
 from knover.core.model import Model
 from knover.models import register_model
 from knover.models.unified_transformer import UnifiedTransformer
-from knover.utils import str2bool
 
 
 @register_model("Classifier")

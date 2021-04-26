@@ -67,8 +67,28 @@ This section defines inference related settings:
 - `save_path`: the output path of inference result.
 - You can define other arguments in inference configuration, such as:
 
+rerank by NSP score:
+
 ```
 infer_args="--ranking_score nsp_score" # this will re-rank candidate responses by scores given by NSP model.
+```
+
+top-k sampling and rerank:
+
+```
+infer_args="--decoding_strategy topk_sampling --num_samples 20 --topk 10 --length_average true"
+```
+
+top-p sampling and rerank:
+
+```
+infer_args="--decoding_strategy topp_sampling --num_samples 20 --topp 0.9 --length_average true"
+```
+
+beam search:
+
+```
+infer_args="--decoding_strategy beam_search --beam_size 10 --length_average true"
 ```
 
 - You can find more arguments in `knover/tasks/${TASK_NAME}.py` and `knover/models/${MODEL_NAME}.py`.

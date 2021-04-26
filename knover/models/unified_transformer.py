@@ -94,8 +94,9 @@ class UnifiedTransformer(Model):
             scale=args.initializer_range)
 
         # task-related
-        self.generator = Generator(args)
         self.do_generation = args.get("do_generation", False)
+        if self.do_generation:
+            self.generator = Generator(args)
 
         super(UnifiedTransformer, self).__init__(args, place)
 
@@ -105,7 +106,8 @@ class UnifiedTransformer(Model):
                    pos_ids,
                    role_ids,
                    input_mask,
-                   aux_emb=None):
+                   aux_emb=None,
+                   name=""):
         """Generate input embeddings of Transformer
 
         Args:
@@ -115,6 +117,7 @@ class UnifiedTransformer(Model):
             input_mask: represents the attention masking mastrix in each Transformer blocks,
                 shape is [batch_size, max_seq_len, max_seq_len]
             aux_emb: represents the auxiliary input embeddings of Transformer.
+            name: the prefix of all embedding layers.
 
         Returns:
             A Tuple contains the input embeddings and the attention masking matrix of Transformer.
@@ -124,19 +127,19 @@ class UnifiedTransformer(Model):
             size=[self.vocab_size, self.emb_size],
             dtype=self.dtype,
             param_attr=fluid.ParamAttr(
-                name=self.token_emb_name, initializer=self.param_initializer))
+                name=name + self.token_emb_name, initializer=self.param_initializer))
         type_emb_out = layers.embedding(
             input=type_ids,
             size=[self.type_size, self.emb_size],
             dtype=self.dtype,
             param_attr=fluid.ParamAttr(
-                name=self.type_emb_name, initializer=self.param_initializer))
+                name=name + self.type_emb_name, initializer=self.param_initializer))
         pos_emb_out = layers.embedding(
             input=pos_ids,
             size=[self.max_position_seq_len, self.emb_size],
             dtype=self.dtype,
             param_attr=fluid.ParamAttr(
-                name=self.pos_emb_name, initializer=self.param_initializer))
+                name=name + self.pos_emb_name, initializer=self.param_initializer))
         emb_out = token_emb_out + type_emb_out + pos_emb_out
 
         if self.use_role:
@@ -145,20 +148,12 @@ class UnifiedTransformer(Model):
                 size=[self.role_type_size, self.emb_size],
                 dtype=self.dtype,
                 param_attr=fluid.ParamAttr(
-                    name=self.role_emb_name, initializer=self.param_initializer))
+                    name=name + self.role_emb_name, initializer=self.param_initializer))
             emb_out = emb_out + role_emb_out
 
         # concat auxiliary memory embeddings
         if aux_emb is not None:
             emb_out = layers.concat([aux_emb, emb_out], axis=1)
-
-        # pre process of input embedding
-        emb_out = pre_process_layer(
-            emb_out,
-            self.pre_encoder_cmd,
-            self.prepostprocess_dropout,
-            name="pre_encoder",
-            epsilon=self.epsilon)
 
         if self.emb_mapping_in:
             emb_out = layers.fc(
@@ -166,32 +161,38 @@ class UnifiedTransformer(Model):
                 num_flatten_dims=2,
                 size=self.hidden_size,
                 param_attr=fluid.ParamAttr(
-                    name="emb_hidden_mapping",
+                    name=name + "emb_hidden_mapping",
                     initializer=self.param_initializer),
-                bias_attr="emb_hidden_mapping_bias")
+                bias_attr=name + "emb_hidden_mapping_bias")
 
         # generate n-head self-attention mask
-        self_attn_mask = layers.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
-        n_head_self_attn_mask = layers.unsqueeze(self_attn_mask, [1])
-        n_head_self_attn_mask.stop_gradient = True
+        if isinstance(input_mask, (tuple, list)):
+            attn_bias = (
+                layers.unsqueeze(
+                    layers.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False), 1)
+                for mask in input_mask
+            )
+        else:
+            attn_bias = layers.unsqueeze(
+                layers.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False), 1)
 
-        return emb_out, n_head_self_attn_mask
+        return emb_out, attn_bias
 
     def _get_pooled_output(self, enc_out, idx=None, name="pooled"):
         """Get pooled output of the last output embedding in Transformer.
 
         Args:
-            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
+            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_size]
             idx (optional): the selected indices in pooling operator, shape is [batch_size, 1] or [batch_size, 2].
             name: a string, the name of the pooling layer.
 
         Returns:
-            pooled_out: the pooled output embedding, shape is [batch_size, hidden_dim].
+            pooled_out: the pooled output embedding, shape is [batch_size, hidden_size].
         """
         if idx is None:
-            feat = layers.slice(input=enc_out, axes=[1], starts=[0], ends=[1])
+            feat = enc_out[:, 0]
         elif len(idx.shape) == 2 and idx.shape[1] == 1:
-            enc_out = layers.reshape(x=enc_out, shape=[-1, self.hidden_size])
+            enc_out = layers.squeeze(enc_out, [1])
             feat = layers.gather(input=enc_out, index=idx)
         elif len(idx.shape) == 2 and idx.shape[1] == 2:
             feat = layers.gather_nd(input=enc_out, index=idx)
@@ -210,7 +211,7 @@ class UnifiedTransformer(Model):
         """Get the output logits of the classifier network.
 
         Args:
-            pooled_out: represents the input embedding of classifier network, shape is [batch_size, hidden_dim]
+            pooled_out: represents the input embedding of classifier network, shape is [batch_size, hidden_size]
             num_classes: an int, the number of classes in classification task.
             name: a string, the name of classifier network.
 
@@ -228,10 +229,11 @@ class UnifiedTransformer(Model):
                             token_ids,
                             type_ids,
                             pos_ids,
-                            role_ids,
-                            generation_mask,
+                            role_ids=None,
+                            generation_mask=None,
                             aux_emb=None,
-                            gather_idx=None):
+                            gather_idx=None,
+                            name="encoder"):
         """Run Transformer generation network.
 
         Args:
@@ -246,26 +248,40 @@ class UnifiedTransformer(Model):
         Returns:
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
-        emb_out, n_head_self_attn_mask = self._gen_input(
-            token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
+        emb_out, attn_bias = self._gen_input(
+            token_ids,
+            type_ids,
+            pos_ids,
+            role_ids,
+            generation_mask,
+            aux_emb=aux_emb)
         return self._encode(
-            emb_out, n_head_self_attn_mask, self.generation_caches,
-            gather_idx=gather_idx)
+            emb_out,
+            attn_bias,
+            caches=self.generation_caches,
+            gather_idx=gather_idx,
+            name=name)
 
-    def _encode(self, emb_input, n_head_self_attn_mask, caches=None, gather_idx=None):
+    def _encode(self,
+                emb_input,
+                attn_bias,
+                caches=None,
+                gather_idx=None,
+                name="encoder"):
         """Run Transformer encode pass.
 
         Args:
-            emb_input: represents the input embeddings fo Transformer, shape is [batch_size, max_seq_len, hidden_dim]
-            n_head_self_attn_mask: represents the attention masking matrix,
-                shape is [batch_size, num_heads, max_seq_len, max_seq_len]
+            emb_input: represents the input embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_size]
+            attn_bias: represents the attention masking matrix, shape is [batch_size, 1, max_seq_len, max_seq_len]
+            caches: a dict, the caches used in efficient decoding, which cache Ks and Vs of memory in each MHA.
+            gather_idx: a index tensor, which determine which branch is used to generate next token.
 
         Returns:
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
         return encoder(
             enc_input=emb_input,
-            attn_bias=n_head_self_attn_mask,
+            attn_bias=attn_bias,
             n_layer=self.n_layer,
             n_head=self.n_head,
             d_key=self.d_key,
@@ -276,33 +292,32 @@ class UnifiedTransformer(Model):
             attention_dropout=self.attention_dropout,
             relu_dropout=0,
             hidden_act=self.hidden_act,
+            pre_encoder_cmd=self.pre_encoder_cmd,
             preprocess_cmd=self.preprocess_cmd,
             postprocess_cmd=self.postprocess_cmd,
             param_initializer=self.param_initializer,
             epsilon=self.epsilon,
             n_layer_per_block=self.n_layer_per_block,
-            name="encoder",
+            name=name,
             caches=caches,
             gather_idx=gather_idx,
             store=caches is not None
         )
 
-    def _calc_logits(self, enc_out, tgt_idx=None):
+    def _calc_logits(self, enc_out, tgt_idx=None, name=""):
         """Get the logits of generation task.
 
         The network may share weight with token embeddings.
 
         Args:
-            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
+            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_size]
             tgt_idx (optional): the indices of prediction tokens, shape is [num_predictions, 2].
 
         Returns:
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
         if tgt_idx is None:
-            enc_out = layers.reshape(
-                x=enc_out, shape=[-1, self.hidden_size])
-            seq_feat = enc_out
+            seq_feat = layers.reshape(x=enc_out, shape=[-1, self.hidden_size])
         elif len(tgt_idx.shape) == 2 and tgt_idx.shape[1] == 2:
             seq_feat = layers.gather_nd(input=enc_out, index=tgt_idx)
         else:
@@ -324,7 +339,7 @@ class UnifiedTransformer(Model):
             logits = layers.matmul(
                 x=seq_trans_feat,
                 y=fluid.default_main_program().global_block().var(
-                    self.token_emb_name),
+                    name + self.token_emb_name),
                 transpose_y=True)
             if self.cls_bias:
                 logits += layers.create_parameter(
@@ -366,15 +381,13 @@ class UnifiedTransformer(Model):
 
         if is_infer:
             feed_dict["tgt_ids"] = layers.data(
-                name="tgt_ids", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
+                name="tgt_ids", shape=[-1, 1, 1], dtype="int64", lod_level=2)
             feed_dict["tgt_pos"] = layers.data(
-                name="tgt_pos", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
+                name="tgt_pos", shape=[-1, 1, 1], dtype="int64", lod_level=2)
             feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
             feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
-
             feed_dict["tgt_generation_mask"] = layers.data(
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
-
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
@@ -457,7 +470,56 @@ class UnifiedTransformer(Model):
         elif isinstance(inputs["data_id"], fluid.LoDTensor):
             return inputs["data_id"].shape()[0]
         else:
-            raise ValueError(f"Invalid type of `data_id`: {type(inputs['data'])}")
+            raise ValueError(f"Invalid type of `data_id`: {type(inputs['data_id'])}")
+
+    def _initialize_state(self, inputs, step_idx):
+        state = {}
+        state["tgt_ids"] = layers.array_write(layers.reshape(inputs["tgt_ids"], [-1, 1]), step_idx)
+        state["tgt_pos"] = layers.array_write(layers.reshape(inputs["tgt_pos"], [-1, 1, 1]), step_idx)
+        state["scores"] = layers.array_write(inputs["init_score"], step_idx)
+        state["tgt_generation_mask"] = layers.array_write(inputs["tgt_generation_mask"], step_idx)
+        state["parent_idx"] = inputs["parent_idx"]
+        return state
+
+    def _prepare_timestep_input(self, state, step_idx):
+        model_input = {"gather_idx": state["parent_idx"]}
+
+        # token ids
+        pre_ids = layers.array_read(array=state["tgt_ids"], i=step_idx)
+        model_input["token_ids"] = layers.unsqueeze(pre_ids, 1)
+
+        # position ids
+        pre_pos = layers.array_read(array=state["tgt_pos"], i=step_idx)
+        model_input["pos_ids"] = layers.gather(pre_pos, state["parent_idx"])
+
+        pre_scores = layers.array_read(array=state["scores"], i=step_idx)
+
+        # generation_mask
+        tgt_generation_mask = layers.array_read(state["tgt_generation_mask"], i=step_idx)
+        append_mask = layers.fill_constant_batch_size_like(pre_ids, [-1, 1, 1], "float32", 1.0)
+        tgt_generation_mask = layers.concat([tgt_generation_mask, append_mask], axis=2)
+
+        model_input["generation_mask"] = pre_mask = layers.gather(tgt_generation_mask, state["parent_idx"])
+
+        model_input["type_ids"] = layers.fill_constant_batch_size_like(pre_mask, [-1, 1, 1], "int64", 1)
+        if self.use_role:
+            model_input["role_ids"] = layers.fill_constant_batch_size_like(pre_mask, [-1, 1, 1], "int64", 0)
+
+        return model_input, pre_ids, pre_scores
+
+    def _update_state(self,
+                      state,
+                      model_input,
+                      selected_ids,
+                      selected_scores,
+                      parent_idx,
+                      step_idx):
+        layers.array_write(selected_ids, i=step_idx, array=state["tgt_ids"])
+        layers.array_write(selected_scores, i=step_idx, array=state["scores"])
+        layers.array_write(model_input["generation_mask"], i=step_idx, array=state["tgt_generation_mask"])
+        layers.array_write(model_input["pos_ids"] + 1, i=step_idx, array=state["tgt_pos"])
+        layers.assign(parent_idx, state["parent_idx"])
+        return state
 
     def _run_generation(self, inputs):
         """Run generation."""

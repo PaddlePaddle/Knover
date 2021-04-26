@@ -16,15 +16,13 @@
 from abc import abstractmethod, ABC
 import os
 
+import paddle.distributed.fleet as fleet
 import paddle.fluid as fluid
-from paddle.fluid.incubate.fleet.collective import fleet, DistributedStrategy
-import paddle.fluid.incubate.fleet.base.role_maker as role_maker
 import paddle.fluid.layers as layers
 
 import knover.optim
 import knover.optim.lr_scheduler as lr_scheduler
-from knover.utils import to_lodtensor, get_tensor
-from knover.utils.args import str2bool
+from knover.utils import to_lodtensor, get_tensor, str2bool
 
 
 class Model(ABC):
@@ -115,17 +113,19 @@ class Model(ABC):
         exec_strategy.num_threads = 4
         exec_strategy.num_iteration_per_drop_scope = 1
 
-        dist_strategy = DistributedStrategy()
-        dist_strategy.exec_strategy = exec_strategy
+        dist_strategy = fleet.DistributedStrategy()
+        dist_strategy.execution_strategy = exec_strategy
         dist_strategy.nccl_comm_num = 1
         dist_strategy.fuse_all_reduce_ops = True
         if self.use_recompute:
-            dist_strategy.forward_recompute = True
-            dist_strategy.enable_sequential_execution = True
+            dist_strategy.recompute = True
         if self.use_amp:
-            dist_strategy.use_amp = True
-            dist_strategy.amp_loss_scaling = self.amp_loss_scaling
+            dist_strategy.amp = True
+            dist_strategy.amp_configs = {
+                "init_loss_scaling": self.amp_loss_scaling
+            }
         self.dist_strategy = dist_strategy
+        print(self.dist_strategy)
         return
 
     def _set_checkpoints(self, checkpoints):
@@ -134,7 +134,9 @@ class Model(ABC):
         Args:
             checkpoints: A list of Variables which need to set as checkpoints.
         """
-        self.dist_strategy.recompute_checkpoints = checkpoints
+        self.dist_strategy.recompute_configs = {
+            "checkpoints": [x.name for x in checkpoints]
+        }
         return
 
     def _build_programs(self):
@@ -185,8 +187,6 @@ class Model(ABC):
                     self.train_fetch_dict = metrics
 
             self.program = self.train_program
-            if self.is_distributed:
-                self.train_program = fleet.main_program
 
         # initialize model
         self.exe.run(self.startup_program)

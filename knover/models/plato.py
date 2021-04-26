@@ -20,7 +20,7 @@ import paddle.fluid.layers as layers
 from knover.models import register_model
 from knover.core.model import Model
 from knover.models.unified_transformer import UnifiedTransformer
-from knover.modules.transformer_block import encoder, pre_process_layer
+from knover.modules.transformer_block import pre_process_layer
 from knover.utils import repeat_array_or_tensor
 from knover.utils import str2bool
 
@@ -221,7 +221,8 @@ class Plato(UnifiedTransformer):
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
         if len(bow_idx.shape) == 2 and bow_idx.shape[1] == 1:
-            bow_feat = layers.gather(input=enc_out, index=bow_idx)
+            enc_out = layers.squeeze(enc_out, [1])
+            bow_feat = layers.gather(input=enc_out, index=bow_idx, overwrite=False)
         elif len(bow_idx.shape) == 2 and bow_idx.shape[1] == 2:
             bow_feat = layers.gather_nd(input=enc_out, index=bow_idx)
         else:

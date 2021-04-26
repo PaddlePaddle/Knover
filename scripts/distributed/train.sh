@@ -19,8 +19,7 @@ if [[ ${log_dir:-""} != "" ]]; then
     distributed_args="${distributed_args:-} --log_dir ${log_dir}"
 fi
 
-python -m \
-    paddle.distributed.launch \
+fleetrun \
     ${distributed_args:-} \
     ./knover/scripts/train.py \
     --is_distributed true \

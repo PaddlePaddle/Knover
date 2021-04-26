@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 
 def setup_args():
+    """Setup arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_file", type=str, required=True)
     parser.add_argument("--log_file", type=str, required=True)
@@ -18,6 +19,7 @@ def setup_args():
 
 
 def main(args):
+    """Main function."""
     logs = json.load(open(args.log_file))
     if args.label_file is not None:
         labels = json.load(open(args.label_file))

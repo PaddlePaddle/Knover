@@ -5,10 +5,12 @@
 import argparse
 import json
 import string
+
 from tqdm import tqdm
 
 
 def setup_args():
+    """Setup arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--log_file", required=True)
     parser.add_argument("--out_file", required=True)
@@ -19,6 +21,7 @@ def setup_args():
 
 
 def main(args):
+    """Main function."""
     with open(args.log_file) as f:
         logs = json.load(f)
     with open(args.knowledge_file) as f:
@@ -26,7 +29,7 @@ def main(args):
     with open(args.schema_desc_file) as f:
         schema_desc = json.load(f)
 
-    def convert_to_tgt(domain, entity, doc):
+    def __convert_to_tgt(domain, entity, doc):
         field_names = ["[DOMAIN]", "[ENTITY]", "[TITLE]", "[BODY]"]
         field_values = [domain]
         if entity["name"] is not None:
@@ -40,7 +43,7 @@ def main(args):
         fields = [name + " " + value for name, value in zip(field_names, field_values)]
         return " ".join(fields)
 
-    def convert_schema_desc_to_tgt(doamin, knowledge_type, description):
+    def __convert_schema_desc_to_tgt(doamin, knowledge_type, description):
         field_names = ["[DOMAIN]", "[TYPE]", "[DESC]"]
         field_values = [domain, knowledge_type, description]
 
@@ -63,14 +66,14 @@ def main(args):
                     entity = knowledge[domain][entity_id]
                     for doc_id in entity["docs"]:
                         doc = entity["docs"][doc_id]
-                        tgt = convert_to_tgt(domain, entity, doc)
+                        tgt = __convert_to_tgt(domain, entity, doc)
                         out_f.write(f"{dialog_str}\t{tgt}\1{0}\n")
 
             for domain in schema_desc:
                 for desc in schema_desc[domain]:
                     knowledge_type = schema_desc[domain][desc]
 
-                    tgt = convert_schema_desc_to_tgt(domain, knowledge_type, desc)
+                    tgt = __convert_schema_desc_to_tgt(domain, knowledge_type, desc)
                     out_f.write(f"{dialog_str}\t{tgt}\1{0}\n")
 
 

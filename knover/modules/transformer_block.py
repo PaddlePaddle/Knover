@@ -33,7 +33,7 @@ def multi_head_attention(queries,
                          store=False,
                          param_initializer=None,
                          name="multi_head_att"):
-    """ Multi-Head Attention.
+    """Multi-Head Attention.
 
     Note that attn_bias is added to the logit before computing softmax activiation to
     mask certain selected positions so that they will not be considered in attention weights.
@@ -74,8 +74,8 @@ def multi_head_attention(queries,
 
         Reshape the last dimension of inpunt tensor x so that it becomes two
         dimensions and then transpose. Specifically, input a tensor with shape
-        [batch_size, max_seq_len, hidden_dim] then output a tensor
-        with shape [batch_size, num_heads, max_seq_len, hidden_dim // num_heads].
+        [batch_size, max_seq_len, hidden_size] then output a tensor
+        with shape [batch_size, num_heads, max_seq_len, hidden_size // num_heads].
         """
         hidden_size = x.shape[-1]
         # The value 0 in shape attr means copying the corresponding dimension
@@ -130,6 +130,7 @@ def multi_head_attention(queries,
         cache_k, cache_v = cache["k"], cache["v"]
         select_k = layers.gather(cache_k, index=gather_idx)
         select_v = layers.gather(cache_v, index=gather_idx)
+
         select_k = layers.reshape(select_k, shape=[0, 0, d_key * n_head])
         select_v = layers.reshape(select_v, shape=[0, 0, d_value * n_head])
         if store:
@@ -258,10 +259,10 @@ def encoder_layer(input,
     """A Transformer encoder block.
 
     The encoder layers that can be stacked to form a deep encoder.
-    This module consits of a multi-head (self) attention followed by
+    This module consists of a multi-head (self) attention followed by
     position-wise feed-forward networks and both the two components are companied
     with the pre_process_layer / post_process_layer to add residual connection,
-    layer normalization and droput.
+    layer normalization and dropout.
     """
     attn_output = multi_head_attention(
         pre_process_layer(
@@ -325,10 +326,11 @@ def encoder(enc_input,
             attention_dropout,
             relu_dropout,
             hidden_act,
+            pre_encoder_cmd="nd",
             preprocess_cmd="n",
             postprocess_cmd="da",
             param_initializer=None,
-            name="",
+            name="encoder",
             epsilon=1e-5,
             n_layer_per_block=1,
             param_share="normal",
@@ -351,6 +353,12 @@ def encoder(enc_input,
             for _ in range(n_layer_per_block):
                 names.append(name + "_layer_" + str(i))
 
+    enc_input = pre_process_layer(
+        enc_input,
+        pre_encoder_cmd,
+        prepostprocess_dropout,
+        name=f"pre_{name}",
+        epsilon=epsilon)
     for i in range(n_layer):
         enc_output, cps = encoder_layer(
             enc_input,
@@ -375,6 +383,10 @@ def encoder(enc_input,
         checkpoints.extend(cps)
         enc_input = enc_output
     enc_output = pre_process_layer(
-        enc_output, preprocess_cmd, prepostprocess_dropout, name="post_encoder", epsilon=epsilon)
+        enc_output,
+        preprocess_cmd,
+        prepostprocess_dropout,
+        name=f"post_{name}",
+        epsilon=epsilon)
 
     return enc_output, checkpoints

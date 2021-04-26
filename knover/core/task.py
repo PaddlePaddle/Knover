@@ -47,9 +47,7 @@ class Task(ABC):
         return outputs
 
     def _post_process_infer_output(self, predictions):
-        """
-        Post-process inference output.
-        """
+        """Post-process inference output."""
         return predictions
 
     def merge_metrics_and_statistics(self, outputs, part_outputs):

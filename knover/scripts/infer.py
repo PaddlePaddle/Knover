@@ -61,6 +61,7 @@ def infer(args):
         gpu_id = int(0)
         phase = "test"
     place = fluid.CUDAPlace(gpu_id)
+
     task = tasks.create_task(args)
     model = models.create_model(args, place)
     infer_generator = task.get_data_loader(
@@ -100,7 +101,7 @@ def infer(args):
         with open(part_finish_file, "w"):
             pass
 
-    # Only run on master GPU in each node
+    # # Only run on master GPU in each node
     if gpu_id != 1:
         return
 

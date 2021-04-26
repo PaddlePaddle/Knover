@@ -245,14 +245,9 @@ class UnifiedTransformer(Model):
         Returns:
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
-        # print("================)))))))))))))))")
-        # print(token_ids,type_ids,pos_ids,role_ids,generation_mask,aux_emb,gather_idx)
         emb_out, n_head_self_attn_mask = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
-        # print(emb_out, n_head_self_attn_mask)
-        # return self._encode(
-        #     emb_out, n_head_self_attn_mask, None,
-        #     gather_idx=gather_idx)
+
         return self._encode(
            emb_out, n_head_self_attn_mask, self.generation_caches,
            gather_idx=gather_idx)
@@ -268,10 +263,6 @@ class UnifiedTransformer(Model):
         Returns:
             A tuple contains the output embeddings of Transformer and the checkpoints of Transformer in this pass.
         """
-        # print(emb_input,n_head_self_attn_mask,self.n_layer,self.n_head,self.d_key,self.d_value,self.hidden_size,
-        #     self.inner_hidden_size,self.prepostprocess_dropout,self.attention_dropout,self.hidden_act,self.preprocess_cmd,
-        #     self.postprocess_cmd,self.param_initializer,self.epsilon,self.n_layer_per_block,caches,gather_idx)
-        print("================****************")
         return encoder(
             enc_input=emb_input,
             attn_bias=n_head_self_attn_mask,
@@ -350,7 +341,6 @@ class UnifiedTransformer(Model):
                     name="mask_lm_out_fc.w_0",
                     initializer=self.param_initializer),
                 bias_attr=seq_out_bias_attr)
-        # print("logits: ", logits)
         return logits
 
     def _get_feed_dict(self, is_infer=False):
@@ -381,13 +371,9 @@ class UnifiedTransformer(Model):
                 name="tgt_pos", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
             feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
             feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
-
             feed_dict["tgt_generation_mask"] = layers.data(
                 name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
-
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
-            # feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            # feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
@@ -412,9 +398,6 @@ class UnifiedTransformer(Model):
                     dtype=self.dtype,
                     value=0),
             } for i in range(self.n_layer)]
-            # print("====================")
-            # print("k: ", self.d_key * self.n_head, "v: ", self.d_value * self.n_head)
-            # print("====================")
         else:
             self.generation_caches = None
 
@@ -478,9 +461,6 @@ class UnifiedTransformer(Model):
         """Run generation."""
         batch_size = self._get_batch_size(inputs)
         inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
-        # with open("run_generation_outputprogram_before.txt", "w") as f:
-        #     f.write(str(self.infer_program))
-        #     print("gen_output_program_____________________")
             
         outputs = self._execute(
             self.infer_program,

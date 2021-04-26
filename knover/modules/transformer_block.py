@@ -110,11 +110,8 @@ def multi_head_attention(queries,
         scaled_q = layers.scale(x=q, scale=d_key ** -0.5)
         product = layers.matmul(x=scaled_q, y=k, transpose_y=True)
         if attn_bias:
-            # print("attn_bias", attn_bias)
-            # print("product", product)
             product += attn_bias
-        # print("attn_bias: ", attn_bias, "q: ", q)
-        # print("product: ", product, "k: ", k)
+
         weights = layers.softmax(product, use_cudnn=True)
         if dropout_rate:
             weights = layers.dropout(
@@ -122,25 +119,19 @@ def multi_head_attention(queries,
                 dropout_prob=dropout_rate,
                 dropout_implementation="upscale_in_train",
                 is_test=False)
-        # print("weights: ", weights, "v: ", v)
+
         out = layers.matmul(weights, v)
-        # print(out)
+
         return out
 
     q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
-    # print("q: ", q, "k: ", k)
-    # print("v: ", v)
-    # cache = None
     if cache is not None:  # use cache and concat time steps
         # Since the inplace reshape in __split_heads changes the shape of k and
         # v, which is the cache input for next time step, reshape the cache
         # input from the previous time step first.
         cache_k, cache_v = cache["k"], cache["v"]
-        # print(cache_k, gather_idx)
         select_k = layers.gather(cache_k, index=gather_idx)
         select_v = layers.gather(cache_v, index=gather_idx)
-        # print("cache_k: ", cache_k, "cache_v: ", cache_v)
-        # print("select_k: ", select_k, "select_v: ", select_v)
         select_k = layers.reshape(select_k, shape=[0, 0, d_key * n_head])
         select_v = layers.reshape(select_v, shape=[0, 0, d_value * n_head])
         if store:
@@ -155,12 +146,11 @@ def multi_head_attention(queries,
             layers.assign(tmp_v, cache["v"])
             k = layers.concat([select_k, k], axis=1)
             v = layers.concat([select_v, v], axis=1)
-            print("k", k, "v", v)
+
 
     q = __split_heads(q, n_head)
     k = __split_heads(k, n_head)
     v = __split_heads(v, n_head)
-    # print("q: ", q, "k: ", k, "v: ", v)
     ctx_multiheads = __scaled_dot_product_attention(q, k, v, attn_bias, d_key,
                                                   dropout_rate)
 
@@ -363,17 +353,7 @@ def encoder(enc_input,
             for _ in range(n_layer_per_block):
                 names.append(name + "_layer_" + str(i))
     
-    # import pdb
-    # pdb.set_trace()
-    # print("&&&&&&&&&&&&&&&&&", n_layer, "&&&&&&&&&&&&&&&&&")
-    # with open("transformer_block_encoder_before.txt", "w") as f:
-    #     f.write(str(fluid.default_main_program()))
-    dst_block = fluid.default_main_program().block(0)
     for i in range(n_layer):
-        if dst_block.has_var("matmul_0.tmp_0"):
-            if dst_block.var("matmul_0.tmp_0").shape == (-1, 16, 1, 2):
-                import pdb
-                pdb.set_trace()
         enc_output, cps = encoder_layer(
             enc_input,
             attn_bias,
@@ -396,8 +376,7 @@ def encoder(enc_input,
             store=store)
         checkpoints.extend(cps)
         enc_input = enc_output
-    # with open("transformer_block_encoder_after.txt", "w") as f:
-    #     f.write(str(fluid.default_main_program()))
+
     enc_output = pre_process_layer(
         enc_output, preprocess_cmd, prepostprocess_dropout, name="post_encoder", epsilon=epsilon)
     

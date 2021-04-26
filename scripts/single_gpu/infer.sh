@@ -31,6 +31,7 @@ if [[ ${nsp_init_params:-""} != "" ]]; then
     infer_args="${infer_args} --nsp_inference_model_path ${nsp_init_params}"
 fi
 export CUDA_VISIBLE_DEVICES=0,1
+# export GLOG_v=3
 python -m paddle.distributed.launch \
     ./knover/scripts/infer.py \
     --is_distributed True \

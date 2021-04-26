@@ -95,7 +95,7 @@ class Generator(object):
         self.beam_size = args.beam_size
         self.length_penalty = args.length_penalty
         self.length_average = args.length_average
-        self.is_distributed = args.get("is_distributed", False)
+        # self.is_distributed = args.get("is_distributed", False)
         return
 
     def inference(self, model, inputs, outputs):
@@ -111,30 +111,28 @@ class Generator(object):
             predictions: A dict mapping keys to corresponding predictions.
         """
         # prepare while loop
-        # import pdb
-        # pdb.set_trace()
         if self.decoding_strategy == "beam_search":
             beam_size = self.beam_size
         else:
             beam_size = 1
-        sharding_info = {
-            "decoding_strategy": self.decoding_strategy,
-            "beam_size": beam_size,
-            "mask_id": self.mask_id,
-            "vocab_size": self.vocab_size,
-            "eos_id": self.eos_id,
-            "unk_id": self.unk_id,
-            "use_role": self.use_role, 
-            "ignore_unk": self.ignore_unk,
-            "length_average": self.length_average,
-            "length_penalty": self.length_penalty,
-            "temperature": self.temperature,
-            "topp": self.topp,
-            "topk": self.topk,
-            "max_dec_len": self.max_dec_len,
-            "min_dec_len": self.min_dec_len,
-            "generation_caches": model.generation_caches
-        }
+        # sharding_info = {
+        #     "decoding_strategy": self.decoding_strategy,
+        #     "beam_size": beam_size,
+        #     "mask_id": self.mask_id,
+        #     "vocab_size": self.vocab_size,
+        #     "eos_id": self.eos_id,
+        #     "unk_id": self.unk_id,
+        #     "use_role": self.use_role, 
+        #     "ignore_unk": self.ignore_unk,
+        #     "length_average": self.length_average,
+        #     "length_penalty": self.length_penalty,
+        #     "temperature": self.temperature,
+        #     "topp": self.topp,
+        #     "topk": self.topk,
+        #     "max_dec_len": self.max_dec_len,
+        #     "min_dec_len": self.min_dec_len,
+        #     "generation_caches": model.generation_caches
+        # }
 
         max_len = layers.fill_constant(
             shape=[1], dtype="int64", value=self.max_dec_len, force_cpu=True)
@@ -148,7 +146,7 @@ class Generator(object):
         scores = layers.array_write(inputs["init_score"], step_idx)
         tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
         parent_idx = inputs["parent_idx"]
-
+        # sharding_info["ids"] = ids
         
 
         eos_penalty = np.zeros(self.vocab_size, dtype="float32")
@@ -199,9 +197,6 @@ class Generator(object):
                         dtype=pre_ids.dtype), y=step_idx, axis=0),
                 pos_bias, axis=0)
 
-            with open("_pre_pos.txt" ,"w") as f:
-                f.write(str(fluid.default_main_program())) 
-
             if self.use_role:
                 pre_role = layers.fill_constant_batch_size_like(
                     input=pre_mask,
@@ -210,8 +205,7 @@ class Generator(object):
                     dtype=pre_ids.dtype)
             else:
                 pre_role = None
-            with open("_generation_before.txt" ,"w") as f:
-                f.write(str(fluid.default_main_program())) 
+
             dec_out, _ = model._generation_network(
                 token_ids=pre_ids,
                 type_ids=pre_sent,
@@ -219,18 +213,13 @@ class Generator(object):
                 role_ids=pre_role,
                 generation_mask=tmp_tgt_generation_mask,
                 gather_idx=parent_idx)
-            with open("_generation_after.txt" ,"w") as f:
-                f.write(str(fluid.default_main_program())) 
 
-            # import pdb
-            # pdb.set_trace()
+            # sharding_info["dec_out"] = dec_out
             logits = model._calc_logits(dec_out)
 
             # ignore unk and mask token
             if self.ignore_unk:
                 logits = layers.elementwise_add(logits, token_penalty, axis=1)
-                with open("_ignore_unk.txt" ,"w") as f:
-                    f.write(str(fluid.default_main_program())) 
 
             # min dec length
             min_len_cond = layers.less_than(x=step_idx, y=min_len)
@@ -244,6 +233,8 @@ class Generator(object):
 
             # get probs
             probs = layers.softmax(logits / self.temperature)
+
+            # sharding_info["probs"] = probs
 
             if self.decoding_strategy == "beam_search":
                 topk_scores, topk_indices = layers.topk(
@@ -330,19 +321,9 @@ class Generator(object):
             length_cond = layers.less_than(x=step_idx, y=max_len)
             finish_cond = layers.logical_not(layers.is_empty(x=selected_ids))
             layers.logical_and(x=length_cond, y=finish_cond, out=cond)
-
-        
-        without_beam_program = fluid.default_main_program().clone()
-            
-
-        with open("program_without_beam_search.txt", "w") as f:
-            f.write(str(fluid.default_main_program()))
-        # with open("program_without_beam_search_True.txt", "w") as f:
-        #     f.write(str(fluid.default_main_program().clone(for_test=True)))
-        finished_ids, finished_scores = layers.beam_search_decode(ids, scores, beam_size=beam_size, end_id=self.eos_id)
-        with open("program.txt", "w") as f:
-            f.write(str(fluid.default_main_program()))
-        # print(str(fluid.default_main_program()))
+       
+        finished_ids, finished_scores = layers.beam_search_decode(
+            ids, scores, beam_size=beam_size, end_id=self.eos_id)
         
         predictions = {
             "finished_ids": finished_ids,
@@ -351,6 +332,5 @@ class Generator(object):
             "data_id": inputs["data_id"]
         }
         
-        # import pdb
-        # pdb.set_trace()
-        return predictions, sharding_info
+        # return predictions, sharding_info
+        return predictions

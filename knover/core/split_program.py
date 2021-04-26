@@ -3,11 +3,57 @@ import paddle.fluid.layers as layers
 import paddle.fluid as fluid
 import paddle.fluid.core as core
 
+# 取出src_block里的op所有vars，dst_block里面的var如果不在vars就去除该op
+def clean_redundancy(src_program, dst_program):
+    removed_vars = set()
+    effective_var = []
+    for i in range(src_program.num_blocks):
+        block = src_program.block(i)
+        for op in block.ops:
+            var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
+            effective_var.extend(var_names)
+    for i in range(dst_program.num_blocks):
+        block = dst_program.block(i)   
+        for indx, op in reversed(list(enumerate(block.ops))):
+            if op.type in ["c_gen_nccl_id", "c_comm_init"]:
+                continue
+            var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
+            for var_name in var_names:
+                if var_name not in effective_var:
+                    if var_name not in removed_vars:                        
+                        block._remove_var(var_name)
+                        removed_vars.add(var_name)
+                    block._remove_op(indx)
+    return
+
+# 取出block里所有的var，然后和op的var比较，没有就删除
+def clean_redundancy_inter(src_program):
+    effective_var = []
+    removed_vars = set()
+    for i in range(src_program.num_blocks):
+        block = src_program.block(i)
+        for op in block.ops:
+            var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
+            effective_var.extend(var_names)
+    for i in range(src_program.num_blocks):
+        block = src_program.block(i)
+        vars = list(block.vars.keys())
+        # print(vars)
+        for var in vars:
+            if var not in effective_var and var not in removed_vars:
+                print(var)
+                block._remove_var(var)
+                removed_vars.add(var)
+    return
+
+
 
 def find_op_idx(block, var_name, as_input=False):
-    for idx, op in enumerate(list(block.ops)):
-        in_names = op.desc.input_arg_names
-        out_names = op.desc.output_arg_names
+    # print("var_name: ", var_name)
+    for idx, op in enumerate(block.ops):
+        in_names = op.desc.input_arg_names()
+        # print(in_names)
+        out_names = op.desc.output_arg_names()
         if as_input and var_name in in_names: return idx
         if not as_input and var_name in out_names: return idx
     raise ValueError("Cannot find a op in block which takes {} as input or output.".format(var_name))
@@ -35,15 +81,12 @@ def op_outputs(op, src_block, dst_block):
             if not dst_block._find_var_recursive(var_name):
                 create_var([var_name], src_block, dst_block)
             val = dst_block._var_recursive(var_name)
-            outputs[param_name].append(val)
+            outputs[param_name].append(val) # 这边需要param_name, 不然就直接op.desc.input_arg_names
 
     return outputs
 
 def create_var(vars, src_block, dst_block, should_rename=False):
     for var in vars:
-        #if var in used_var_set or "_blocking_queue" in var: continue
-        #used_var_set.add(var)
-        #if dst_block.has_var(var):continue
         source_var = src_block._var_recursive(var)
         if source_var.type == core.VarDesc.VarType.READER:
             dst_var= dst_block.create_var(name=var, type=core.VarDesc.VarType.READER, persistable=source_var.persistable)
@@ -51,7 +94,6 @@ def create_var(vars, src_block, dst_block, should_rename=False):
             if should_rename:
                 new_var_name = var + ".tmp"
                 dst_block._rename_var(var, new_var_name)
-            #dst_var = dst_block._clone_variable(source_var, False)
             dst_var = dst_block.create_var(
                 name=var,
                 shape=source_var.shape,
@@ -62,7 +104,6 @@ def create_var(vars, src_block, dst_block, should_rename=False):
                 is_data=source_var.is_data,
                 need_check_feed=source_var.desc.need_check_feed())
         if should_rename:
-            print("rename {} to {}".format(var, new_var_name))
             for op in dst_block.ops:
                 input_names = op.desc.input_arg_names()
                 output_names = op.desc.output_arg_names()
@@ -70,22 +111,26 @@ def create_var(vars, src_block, dst_block, should_rename=False):
                 if var in inout_names:
                     op._rename_input(var, new_var_name)
                     op._rename_output(var, new_var_name)
-        print(source_var)
-        print("created")
         dst_var.stop_gradient = source_var.stop_gradient
 
 
-#
+
 def replace(src_program,
             dst_program,
             src_block_id=0,
-            dst_block_id=1,
-            src_block_start_op_idx=12,
-            src_block_end_op_idx=100,
+            dst_block_id=0,
+            src_block_start_op_idx=None,
+            src_block_end_op_idx=None,
             dst_block_start_op_idx=None,
-            dst_block_end_op_idx=None):
+            dst_block_end_op_idx=None
+            # src_ops=None
+            ):
     src_block = src_program.block(src_block_id)
     dst_block = dst_program.block(dst_block_id)
+    with open("src_{}.txt".format(fleet.worker_index()), "w") as f:
+        f.write(str(src_program))
+    with open("dst_{}.txt".format(fleet.worker_index()), "w") as f:
+        f.write(str(dst_program))
     src_ops = src_block.ops
     dst_ops = dst_block.ops
     if src_block_start_op_idx is None:
@@ -96,17 +141,23 @@ def replace(src_program,
         dst_block_start_op_idx = 0
     if dst_block_end_op_idx is None:
         dst_block_end_op_idx = len(dst_ops)
-
-    with open("src_program_org0_%d.txt"%fleet.worker_index(), "w") as f:
-        f.write(str(src_program))
-    with open("dst_program_org0_%d.txt"%fleet.worker_index(), "w") as f:
-        f.write(str(dst_program))
     
-    # 修改src_block的名字
     dst_op_idx = dst_block_start_op_idx
     copied_op_num = 0
+    print("=================")
+    print("len src_ops", len(src_ops))
+    print("len dst_ops", len(dst_ops))
+    print("src_block_id", src_block_id)
+    print("dst_block_id", dst_block_id)
+    print("src_block_start_op_idx: ", src_block_start_op_idx)
+    print("src_block_end_op_idx: ", src_block_end_op_idx)
+    print("dst_block_start_op_idx: ", dst_block_start_op_idx)
+    print("dst_block_end_op_idx: ", dst_block_end_op_idx)
+    len_nums = 0
+    dst_idx = 0
     for i in range(src_block_start_op_idx, src_block_end_op_idx):
         src_op = src_block.ops[i]
+        # src_op = src_ops[i]
         if src_op.type in ["c_sync_calc_stream",
                            "c_sync_comm_stream",
                            "c_broadcast"] or (
@@ -120,23 +171,23 @@ def replace(src_program,
                 inputs=op_inputs(src_op, src_block, dst_block),
                 outputs=op_outputs(src_op, src_block, dst_block))
             dst_op_idx += 1
+            len_nums += 1
             continue 
         dst_op = dst_block.ops[dst_op_idx]
         #FIXME:
-        if src_op.type != dst_op.type:           
+        if src_op.type != dst_op.type:
+            print("src_i", i)     
+            print("dst_i", dst_idx)      
+            print("src_op.type: ", src_op.type)
+            print("dst_op.type: ", dst_op.type)
+            print("dst_op_idx: ", dst_op_idx)
             break
         assert src_op.type == dst_op.type, ("src_op {} does not match dst_op:"
                 " {}".format(src_op.type, dst_op.type))
+        dst_idx += 1
         dst_op_idx += 1
+        len_nums += 1
 
-    with open("src_program_org_%d.txt"%fleet.worker_index(), "w") as f:
-        f.write(str(src_program))
-    with open("dst_program_org_%d.txt"%fleet.worker_index(), "w") as f:
-        f.write(str(dst_program))
-
-    #with open("src_program_%d.txt"%fleet.worker_index(), "w") as f:
-    #    f.write(str(src_program))
-    #with open("dst_program_%d.txt"%fleet.worker_index(), "w") as f:
-    #    f.write(str(dst_program))
-    
+    print("len_nums: ", len_nums)
+    print("=======================")
     return

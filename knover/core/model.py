@@ -28,8 +28,7 @@ import knover.optim.lr_scheduler as lr_scheduler
 from knover.utils import to_lodtensor, get_tensor
 from knover.utils.args import str2bool
 
-from knover.core.split_program import replace
-from knover.core.split_program import find_op_idx
+from knover.core.split_program import replace, find_op_idx, clean_redundancy, clean_redundancy_inter
 
 
 class Model(ABC):
@@ -143,7 +142,7 @@ class Model(ABC):
         """
         self.startup_program = fluid.Program()
         if self.run_infer:
-            self.is_distributed = True
+            # self.is_distributed = True
             if self.is_distributed:
                 self._init_distributed_strategy()
             # build inference program
@@ -151,127 +150,134 @@ class Model(ABC):
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)               
-                    generation_caches_tmp = list()
-                    for cache in self.generation_caches:
-                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})     
-                    predictions, sharding_info = self.infer(inputs, outputs)
+                    outputs = self.forward(inputs, is_infer=True)             
+                    # generation_caches_tmp = list()
+                    # for cache in self.generation_caches:
+                    #     generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})     
+                    # predictions, sharding_info = self.infer(inputs, outputs)
+                    predictions = self.infer(inputs, outputs)
                     self.infer_fetch_dict = predictions
-
-            # sharding for forward_program
-            self.forward_program = fluid.Program()
-            with fluid.program_guard(self.forward_program, self.startup_program):
-                with fluid.unique_name.guard():
-                    self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)
-            replace(self.forward_program, self.infer_program, src_block_id=0, dst_block_id=1)
-            # sharding for without_beam_program
-            self.generation_caches = generation_caches_tmp
-            self.without_beam_program = fluid.Program()
-            for cache in self.generation_caches:
-                # copy cache into the sharding program
-                # 将cache里的内容拷贝到sharding的program
-                self.without_beam_program.block(0)._clone_variable(cache["k"], False)
-                self.without_beam_program.block(0)._clone_variable(cache["v"], False)
-            with fluid.program_guard(self.without_beam_program, self.startup_program):
-                with fluid.unique_name.guard():
-                    inputs = self._get_feed_dict(is_infer=True)
-                    inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-                    inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
-                    # self.infer_feed_dict = inputs
-                    max_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["max_dec_len"], force_cpu=True)
-                    min_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["min_dec_len"], force_cpu=True)
-                    step_idx = layers.fill_constant(shape=[1], dtype="int64", value=0, force_cpu=True)
-                    ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
-                    pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
-                    scores = layers.array_write(inputs["init_score"], step_idx)
-                    tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
-                    parent_idx = inputs["parent_idx"]
-                    eos_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
-                    eos_penalty[sharding_info["eos_id"]] = -1e9
-                    eos_penalty = layers.assign(eos_penalty)
-
-                    token_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
-                    token_penalty[sharding_info["unk_id"]] = -1e9
-                    if sharding_info["mask_id"] >= 0:
-                        token_penalty[sharding_info["mask_id"]] = -1e9
-                    token_penalty = layers.assign(token_penalty)
-                    # start while loop
-                    cond = layers.less_than(x=step_idx, y=max_len)
-                    while_op = layers.While(cond)
-                    # with while_op.block():
-                    pre_ids = layers.array_read(array=ids, i=step_idx)
-                    pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
-                    pre_scores = layers.array_read(array=scores, i=step_idx)
-                    pos_bias = layers.array_read(array=pos_biases, i=step_idx)
-                    pos_bias = layers.gather(input=pos_bias, index=parent_idx)
-                    tmp_tgt_generation_mask = layers.array_read(tgt_generation_mask, i=step_idx)
-                    dtype = tmp_tgt_generation_mask.dtype
-                    append_mask = layers.fill_constant_batch_size_like(
-                            input=pre_ids,
-                            value=1.0,
-                            shape=[-1, 1, 1],
-                            dtype=dtype)
-                    tmp_tgt_generation_mask = layers.concat([tmp_tgt_generation_mask, append_mask], axis=2)
-                    pre_mask = tmp_tgt_generation_mask = layers.gather(input=tmp_tgt_generation_mask, index=parent_idx)
-                    pre_sent = layers.fill_constant_batch_size_like(
-                            input=pre_mask,
-                            value=1,
-                            shape=[-1, 1, 1],
-                            dtype=pre_ids.dtype)
-
-                    pre_pos = layers.elementwise_add(
-                        layers.elementwise_mul(
-                            x=layers.fill_constant_batch_size_like(
-                                input=pre_mask,
-                                value=1,
-                                shape=[-1, 1, 1],
-                                dtype=pre_ids.dtype), y=step_idx, axis=0),
-                        pos_bias, axis=0)
-                    
-                    if sharding_info["use_role"]:
-                        pre_role = layers.fill_constant_batch_size_like(
-                            input=pre_mask,
-                            value=0,
-                            shape=[-1, 1, 1],
-                            dtype=pre_ids.dtype)
-                    else:
-                        pre_role = None
-
-                    # import pdb
-                    # pdb.set_trace()
-                    outputs = {}
-                    outputs['enc_out'], _ = self._generation_network(
-                        token_ids=pre_ids,
-                        type_ids=pre_sent,
-                        pos_ids=pre_pos,
-                        role_ids=pre_role,
-                        generation_mask=tmp_tgt_generation_mask,
-                        gather_idx=parent_idx)
-                        
-                    # outputs = self.forward(inputs)
-                    
-                    # if self.use_recompute:
-                    #     self._set_checkpoints(outputs["checkpoints"])
-                    metrics = self.get_metrics(inputs, outputs)
-                    self.optimize(metrics)
-                    
-                    # with open("sharding_program.txt", "w") as f:
-                    #     f.write(str(fluid.default_main_program()))
-                    #     print("sharding_program ================")
-            with open("sharding_startup_program.txt", "w") as f:
-                f.write(str(self.without_beam_program))
-            
-            self.without_beam_program = self.without_beam_program.clone(for_test=True)
+ 
             self.infer_program = self.infer_program.clone(for_test=True)
-            # fuse program
-            # with open("infer_program_up.txt", "w") as f:
+            # with open("forward_without.txt", "w") as f:
             #     f.write(str(self.infer_program))
-            # with open("without_beam_program.txt", "w") as f:
-            #     f.write(str(self.without_beam_program))
+            # # sharding for forward_program
+            # forward_program = fluid.Program()
+            # with fluid.program_guard(forward_program, self.startup_program):
+            #     with fluid.unique_name.guard():
+            #         inputs = self._get_feed_dict(is_infer=True)
+            #         inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+            #         inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")                    
+            #         outputs = self.forward(inputs, is_infer=True)
+            #         metrics = self.get_metrics(inputs, outputs)
+            #         self.optimize(metrics)
             
-            replace(self.without_beam_program, self.infer_program)
+            # forward_program = forward_program.clone(for_test=True)
+            # replace(forward_program, self.infer_program, src_block_id=0, dst_block_id=0,\
+            #     src_block_start_op_idx=0, src_block_end_op_idx=None,
+            #     dst_block_start_op_idx=0, dst_block_end_op_idx=None
+            #     )
+
+            # # sharding for without_beam_program
+            # self.generation_caches = generation_caches_tmp
+            # without_beam_program = fluid.Program()
+            # for cache in self.generation_caches:
+            #     # copy original cache into the sharding program
+            #     without_beam_program.block(0)._clone_variable(cache["k"], False)
+            #     without_beam_program.block(0)._clone_variable(cache["v"], False)
+
+            # with fluid.program_guard(without_beam_program, self.startup_program):
+            #     with fluid.unique_name.guard():
+            #         inputs = self._get_feed_dict(is_infer=True)
+            #         inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+            #         inputs["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
+            #         max_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["max_dec_len"], force_cpu=True)
+            #         min_len = layers.fill_constant(shape=[1], dtype="int64", value=sharding_info["min_dec_len"], force_cpu=True)
+            #         step_idx = layers.fill_constant(shape=[1], dtype="int64", value=0, force_cpu=True)
+            #         ids = layers.array_write(layers.reshape(inputs["tgt_ids"], (-1, 1)), step_idx)
+            #         pos_biases = layers.array_write(layers.reshape(inputs["tgt_pos"], (-1, 1)), step_idx)
+            #         scores = layers.array_write(inputs["init_score"], step_idx)
+            #         tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
+            #         parent_idx = inputs["parent_idx"]
+            #         eos_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
+            #         eos_penalty[sharding_info["eos_id"]] = -1e9
+            #         eos_penalty = layers.assign(eos_penalty)
+
+            #         token_penalty = np.zeros(sharding_info["vocab_size"], dtype="float32")
+            #         token_penalty[sharding_info["unk_id"]] = -1e9
+            #         if sharding_info["mask_id"] >= 0:
+            #             token_penalty[sharding_info["mask_id"]] = -1e9
+            #         token_penalty = layers.assign(token_penalty)
+            #         # start while loop
+            #         # cond = layers.less_than(x=step_idx, y=max_len)
+            #         # while_op = layers.While(cond)
+            #         # # with while_op.block():
+            #         pre_ids = layers.array_read(array=ids, i=step_idx)
+            #         pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
+            #         pre_scores = layers.array_read(array=scores, i=step_idx)
+            #         pos_bias = layers.array_read(array=pos_biases, i=step_idx)
+            #         pos_bias = layers.gather(input=pos_bias, index=parent_idx)
+            #         tmp_tgt_generation_mask = layers.array_read(tgt_generation_mask, i=step_idx)
+            #         dtype = tmp_tgt_generation_mask.dtype
+            #         append_mask = layers.fill_constant_batch_size_like(
+            #                 input=pre_ids,
+            #                 value=1.0,
+            #                 shape=[-1, 1, 1],
+            #                 dtype=dtype)
+            #         tmp_tgt_generation_mask = layers.concat([tmp_tgt_generation_mask, append_mask], axis=2)
+            #         pre_mask = tmp_tgt_generation_mask = layers.gather(input=tmp_tgt_generation_mask, index=parent_idx)
+            #         pre_sent = layers.fill_constant_batch_size_like(
+            #                 input=pre_mask,
+            #                 value=1,
+            #                 shape=[-1, 1, 1],
+            #                 dtype=pre_ids.dtype)
+
+            #         pre_pos = layers.elementwise_add(
+            #             layers.elementwise_mul(
+            #                 x=layers.fill_constant_batch_size_like(
+            #                     input=pre_mask,
+            #                     value=1,
+            #                     shape=[-1, 1, 1],
+            #                     dtype=pre_ids.dtype), y=step_idx, axis=0),
+            #             pos_bias, axis=0)
+                    
+            #         if sharding_info["use_role"]:
+            #             pre_role = layers.fill_constant_batch_size_like(
+            #                 input=pre_mask,
+            #                 value=0,
+            #                 shape=[-1, 1, 1],
+            #                 dtype=pre_ids.dtype)
+            #         else:
+            #             pre_role = None
+            #         outputs = {}
+            #         outputs['enc_out'], _ = self._generation_network(
+            #             token_ids=pre_ids,
+            #             type_ids=pre_sent,
+            #             pos_ids=pre_pos,
+            #             role_ids=pre_role,
+            #             generation_mask=tmp_tgt_generation_mask,
+            #             gather_idx=parent_idx)
+                       
+            #         metrics = self.get_metrics(inputs, outputs)
+            #         self.optimize(metrics)
+
+            # without_beam_program = without_beam_program.clone(for_test=True)
+            # self.infer_program = self.infer_program.clone(for_test=True)            
+            # replace(without_beam_program, self.infer_program, \
+            #     src_block_id=0, dst_block_id=1, \
+            #     src_block_start_op_idx=11, src_block_end_op_idx=None,\
+            #     dst_block_start_op_idx=0, dst_block_end_op_idx=None
+            #         )
+
+            # # 拿出所有infer的op的vars，删除掉startup_program的冗余vars
+            # clean_redundancy(self.infer_program, self.startup_program)
+            # # clean_redundancy_inter(self.startup_program)
+            # # clean_redundancy_inter(self.infer_program)
+            # with open("forward_sharding.txt", "w") as f:
+            #     f.write(str(self.infer_program))
             self.program = self.infer_program
+            with open("my_infer.txt", "w") as f:
+                f.write(str(self.infer_program))
             
         else:
             # initialize distributed setting
@@ -303,12 +309,10 @@ class Model(ABC):
                     self.train_fetch_dict = metrics
 
             self.program = self.train_program
-
+            
 
         # initialize model
         self.exe.run(self.startup_program)
-        with open("infer_startup_program.txt", "w") as f:
-            f.write(str(self.startup_program))
         if self.init_pretraining_params != "":
             self.load(self.init_pretraining_params)
         elif self.init_checkpoint != "":
@@ -519,7 +523,6 @@ class Model(ABC):
 
         # distributed optimizer
         if self.is_distributed:
-            print(str(self.dist_strategy.sharding))
             optimizer = fleet.distributed_optimizer(optimizer, strategy=self.dist_strategy)
 
         optimizer.minimize(metrics["loss"])

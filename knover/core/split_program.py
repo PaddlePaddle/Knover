@@ -2,34 +2,41 @@ import paddle.distributed.fleet as fleet
 import paddle.fluid.layers as layers
 import paddle.fluid as fluid
 import paddle.fluid.core as core
+import time
 
 # 取出src_block里的op所有vars，dst_block里面的var如果不在vars就去除该op
-def clean_redundancy(src_block, dst_block):
+def clean_redundancy(src_program, dst_program):
+    start = time.time()
     removed_vars = set()
     effective_var = []
-    for i in range(src_block.num_blocks):
-        block = src_block.block(i)
+    for i in range(src_program.num_blocks):
+        block = src_program.block(i)
         for op in block.ops:
-            var_names= op.desc.input_arg_names() + op.desc.output_arg_names()
-            effective_var.extend(var_names)
-    for i in range(dst_block.num_blocks):
-        block = dst_block.block(i)   
-        for indx, op in reversed(list(enumerate(block.ops))):
-            if op.type in ["c_gen_nccl_id", "c_comm_init"]:
-                continue
+            if op.type == "while": continue
             var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
-            for var_name in var_names:
-                if var_name not in effective_var:
-                    if var_name not in removed_vars:                        
-                        block._remove_var(var_name)
-                        removed_vars.add(var_name)
-                    block._remove_op(indx)
+            effective_var.extend(var_names)
+
+    assert dst_program.num_blocks == 1
+    block = dst_program.global_block()
+    for idx, op in reversed(list(enumerate(block.ops))):
+        if op.type in ["c_gen_nccl_id", "c_comm_init"]:
+            continue
+        var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
+        should_remove = False
+        for var_name in var_names:
+            if var_name not in effective_var:
+                should_remove = True
+                if var_name not in removed_vars:                        
+                    block._remove_var(var_name)
+                    removed_vars.add(var_name)
+        if should_remove: block._remove_op(idx)
+    end = time.time()
+    print("clean_redundant time:", end - start)
+    return
 
 def find_op_idx(block, var_name, as_input=False):
-    # print("var_name: ", var_name)
     for idx, op in enumerate(block.ops):
         in_names = op.desc.input_arg_names()
-        # print(in_names)
         out_names = op.desc.output_arg_names()
         if as_input and var_name in in_names: return idx
         if not as_input and var_name in out_names: return idx
@@ -55,11 +62,12 @@ def op_outputs(op, src_block, dst_block):
         outputs[param_name] = []
         var_names = op.output(param_name)
         for var_name in var_names:
-            if not dst_block._find_var_recursive(var_name):
+            #create Broadcasted var in sub block to gc
+            if not dst_block._find_var_recursive(var_name) or (
+                '@BroadCast' in var_name and not dst_block.has_var(var_name)):
                 create_var([var_name], src_block, dst_block)
             val = dst_block._var_recursive(var_name)
-            outputs[param_name].append(val) # 这边需要param_name, 不然就直接op.desc.input_arg_names
-
+            outputs[param_name].append(val)
     return outputs
 
 def create_var(vars, src_block, dst_block, should_rename=False):
@@ -94,20 +102,16 @@ def create_var(vars, src_block, dst_block, should_rename=False):
 
 def replace(src_program,
             dst_program,
-            src_block_id=0,
-            dst_block_id=0,
+            src_block_id,
+            dst_block_id,
             src_block_start_op_idx=None,
             src_block_end_op_idx=None,
             dst_block_start_op_idx=None,
             dst_block_end_op_idx=None
-            # src_ops=None
             ):
+    start = time.time()
     src_block = src_program.block(src_block_id)
     dst_block = dst_program.block(dst_block_id)
-    with open("src_{}.txt".format(fleet.worker_index()), "w") as f:
-        f.write(str(src_program))
-    with open("dst_{}.txt".format(fleet.worker_index()), "w") as f:
-        f.write(str(dst_program))
     src_ops = src_block.ops
     dst_ops = dst_block.ops
     if src_block_start_op_idx is None:
@@ -120,27 +124,13 @@ def replace(src_program,
         dst_block_end_op_idx = len(dst_ops)
     
     dst_op_idx = dst_block_start_op_idx
-    copied_op_num = 0
-    print("=================")
-    print("len src_ops", len(src_ops))
-    print("len dst_ops", len(dst_ops))
-    print("src_block_id", src_block_id)
-    print("dst_block_id", dst_block_id)
-    print("src_block_start_op_idx: ", src_block_start_op_idx)
-    print("src_block_end_op_idx: ", src_block_end_op_idx)
-    print("dst_block_start_op_idx: ", dst_block_start_op_idx)
-    print("dst_block_end_op_idx: ", dst_block_end_op_idx)
-    len_nums = 0
-    dst_idx = 0
     for i in range(src_block_start_op_idx, src_block_end_op_idx):
         src_op = src_block.ops[i]
-        # src_op = src_ops[i]
         if src_op.type in ["c_sync_calc_stream",
                            "c_sync_comm_stream",
                            "c_broadcast"] or (
-                src_op.type == "fill_constant" and
-                "BroadCast" in src_op.desc.output_arg_names()[0]):
-            copied_op_num += 1
+               src_op.type == "fill_constant" and
+               "BroadCast" in src_op.desc.output_arg_names()[0]):
             dst_block._insert_op(
                 index=dst_op_idx,
                 type=src_op.type,
@@ -148,23 +138,54 @@ def replace(src_program,
                 inputs=op_inputs(src_op, src_block, dst_block),
                 outputs=op_outputs(src_op, src_block, dst_block))
             dst_op_idx += 1
-            len_nums += 1
             continue 
         dst_op = dst_block.ops[dst_op_idx]
         #FIXME:
         if src_op.type != dst_op.type:
-            print("src_i", i)     
-            print("dst_i", dst_idx)      
-            print("src_op.type: ", src_op.type)
-            print("dst_op.type: ", dst_op.type)
-            print("dst_op_idx: ", dst_op_idx)
             break
-        assert src_op.type == dst_op.type, ("src_op {} does not match dst_op:"
-                " {}".format(src_op.type, dst_op.type))
-        dst_idx += 1
         dst_op_idx += 1
-        len_nums += 1
+   
+    param_new_name = dict()
 
-    print("len_nums: ", len_nums)
-    print("=======================")
+    if True:
+        block = dst_block
+        for op in block.ops:
+            var_names = op.desc.input_arg_names() + op.desc.output_arg_names()
+            for var_name in var_names:
+                if '@BroadCast' in var_name:
+                    param_name = var_name.split('@BroadCast')[0]
+                    param_new_name[param_name] = var_name
+                elif var_name in param_new_name:
+                    real_name = param_new_name[var_name]
+                    op._rename_input(var_name, real_name)
+
+    
+    # remove unnecessary var in while op's input to erase them early
+    if dst_block_id == 0: return
+    can_remove_vars = set()
+    input_vars = set()
+    for op in dst_block.ops:
+        var_names = op.desc.input_arg_names()
+        for var_name in var_names:
+            input_vars.add(var_name)
+        var_names = op.desc.output_arg_names()
+        for var_name in var_names:
+            if var_name not in input_vars:
+                can_remove_vars.add(var_name)
+
+    global_block =dst_program.global_block()
+    removed_vars = []
+    for op in global_block.ops:
+        if op.type != 'while': continue
+        reserved_x = []
+        input_names = op.desc.input_arg_names()
+        for input_name in input_names:
+            if input_name not in can_remove_vars:
+                reserved_x.append(input_name)
+            else:
+                removed_vars.append(input_name)
+        op.desc.set_input('X', reserved_x)
+    print('removed_vars:', removed_vars)
+    end = time.time()
+    print("replace time:", end-start)
     return

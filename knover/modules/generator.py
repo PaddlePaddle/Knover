@@ -146,7 +146,11 @@ class Generator(object):
         scores = layers.array_write(inputs["init_score"], step_idx)
         tgt_generation_mask = layers.array_write(inputs["tgt_generation_mask"], step_idx)
         parent_idx = inputs["parent_idx"]
-
+        if self.decoding_strategy == "beam_search":
+            beam_size = self.beam_size
+        else:
+            beam_size = 1
+        sharding_info["ids"] = ids
         
 
         eos_penalty = np.zeros(self.vocab_size, dtype="float32")
@@ -214,6 +218,7 @@ class Generator(object):
                 generation_mask=tmp_tgt_generation_mask,
                 gather_idx=parent_idx)
 
+            sharding_info["dec_out"] = dec_out
             logits = model._calc_logits(dec_out)
 
             # ignore unk and mask token
@@ -232,6 +237,8 @@ class Generator(object):
 
             # get probs
             probs = layers.softmax(logits / self.temperature)
+
+            sharding_info["probs"] = probs
 
             if self.decoding_strategy == "beam_search":
                 topk_scores, topk_indices = layers.topk(

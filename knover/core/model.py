@@ -104,6 +104,9 @@ class Model(ABC):
                 print("[WARM] Cannot support recomputation in non-distributed mode.")
             if self.use_amp:
                 print("[WARM] Cannot support AMP in non-distributed mode.")
+        # For infer
+        assert not self.use_recompute
+        assert not self.use_amp
 
         # model mode
         self.run_infer = args.get("run_infer", False)
@@ -118,9 +121,9 @@ class Model(ABC):
         
         dist_strategy.sharding = True
         dist_strategy.sharding_configs = {
-            "fuse_broadcast_MB": 32,
+            "segment_broadcast_MB": 3,
             "hybrid_dp": False,
-            "sharding_group_size": 2
+            'sharding_degree': 4
         }
 
         self.dist_strategy = dist_strategy
@@ -142,26 +145,23 @@ class Model(ABC):
         """
         self.startup_program = fluid.Program()
         if self.run_infer:
-            self.is_distributed = True
-            if self.is_distributed:
-                self._init_distributed_strategy()
+            self._init_distributed_strategy()
             # build inference program
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):
                 with fluid.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
-                    outputs = self.forward(inputs, is_infer=True)             
+                    outputs = self.forward(inputs, is_infer=True)
                     generation_caches_tmp = list()
                     for cache in self.generation_caches:
-                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})     
+                        generation_caches_tmp.append({"k":cache["k"].clone(), "v":cache["v"].clone()})         
                     predictions, sharding_info = self.infer(inputs, outputs)
                     self.infer_fetch_dict = predictions
- 
-
+            self.infer_program = self.infer_program.clone(for_test=True)
 
             # sharding for forward_program
             forward_program = fluid.Program()
-            with fluid.program_guard(forward_program, self.startup_program):
+            with fluid.program_guard(forward_program, fluid.Program()):
                 with fluid.unique_name.guard():
                     inputs = self._get_feed_dict(is_infer=True)
                     inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
@@ -171,10 +171,9 @@ class Model(ABC):
                     self.optimize(metrics)
                     
             forward_program = forward_program.clone(for_test=True)
-            replace(forward_program, self.infer_program, src_block_id=0, dst_block_id=0,\
+            replace(forward_program, self.infer_program, src_block_id=0, dst_block_id=0,
                 src_block_start_op_idx=0, src_block_end_op_idx=None,
-                dst_block_start_op_idx=0, dst_block_end_op_idx=None
-                )
+                dst_block_start_op_idx=0, dst_block_end_op_idx=None)
 
             # sharding for without_beam_program
             self.generation_caches = generation_caches_tmp
@@ -184,7 +183,8 @@ class Model(ABC):
                 without_beam_program.block(0)._clone_variable(cache["k"], False)
                 without_beam_program.block(0)._clone_variable(cache["v"], False)
 
-            with fluid.program_guard(without_beam_program, self.startup_program):
+            self.new_startup = fluid.Program()
+            with fluid.program_guard(without_beam_program, self.new_startup):
                 with fluid.unique_name.guard():
                     inputs = self._get_feed_dict(is_infer=True)
                     inputs["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
@@ -206,10 +206,7 @@ class Model(ABC):
                     if sharding_info["mask_id"] >= 0:
                         token_penalty[sharding_info["mask_id"]] = -1e9
                     token_penalty = layers.assign(token_penalty)
-                    # start while loop
-                    # cond = layers.less_than(x=step_idx, y=max_len)
-                    # while_op = layers.While(cond)
-                    # # with while_op.block():
+
                     pre_ids = layers.array_read(array=ids, i=step_idx)
                     pre_ids = layers.reshape(pre_ids, (-1, 1, 1), inplace=True)
                     pre_scores = layers.array_read(array=scores, i=step_idx)
@@ -260,55 +257,34 @@ class Model(ABC):
                     self.optimize(metrics)
 
             without_beam_program = without_beam_program.clone(for_test=True)
-            self.infer_program = self.infer_program.clone(for_test=True)            
+           
             replace(without_beam_program, self.infer_program, \
                 src_block_id=0, dst_block_id=1, \
                 src_block_start_op_idx=11, src_block_end_op_idx=None,\
                 dst_block_start_op_idx=0, dst_block_end_op_idx=None
-                    )
+            )
 
-            # 拿出所有infer的op的vars，删除掉startup_program的冗余vars
             clean_redundancy(self.infer_program, self.startup_program)
+
             self.program = self.infer_program
             
         else:
             # initialize distributed setting
-            if self.is_distributed:
-                self._init_distributed_strategy()
-
-            # build training program
-            self.train_program = fluid.Program()
-            with fluid.program_guard(self.train_program, self.startup_program):
-                with fluid.unique_name.guard():
-                    self.feed_dict = inputs = self._get_feed_dict()
-                    outputs = self.forward(inputs)
-
-                    if self.is_distributed and self.use_recompute:
-                        self._set_checkpoints(outputs["checkpoints"])
-
-                    metrics = self.get_metrics(inputs, outputs)
-
-                    # build evaluation program
-                    self.eval_program = self.train_program.clone(for_test=True)
-                    self.eval_fetch_dict = dict(**metrics)
-
-                    scheduled_lr = self.optimize(metrics)
-                    metrics["scheduled_lr"] = scheduled_lr
-                    if self.is_distributed and self.use_amp:
-                        vars_ = fluid.default_main_program().global_block().vars
-                        loss_scaling = vars_["loss_scaling_0"]
-                        metrics["loss_scaling"] = loss_scaling
-                    self.train_fetch_dict = metrics
-
-            self.program = self.train_program
+            assert (False)
 
 
-        # initialize model
+        for op in self.new_startup.global_block().ops: 
+            if op.type not in ['c_gen_nccl_id', 'c_comm_init']:
+                continue
+            op_desc = op.desc
+            ap_op = self.startup_program.global_block().desc.append_op()
+            ap_op.copy_from(op_desc)
+            var_names = op.desc.input_arg_names() + op.desc.output_arg_names() 
+            for var_name in var_names:
+                source_var = self.new_startup.global_block().var(var_name)
+                self.startup_program.global_block()._clone_variable(source_var, False)
+        self.startup_program.global_block()._sync_with_cpp()
         self.exe.run(self.startup_program)
-        if self.init_pretraining_params != "":
-            self.load(self.init_pretraining_params)
-        elif self.init_checkpoint != "":
-            self.load(self.init_checkpoint, is_checkpoint=True)
         return
 
     def load(self, model_path, is_checkpoint=False):

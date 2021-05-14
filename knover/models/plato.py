@@ -125,11 +125,10 @@ class Plato(UnifiedTransformer):
             dtype=self.dtype,
             param_attr=fluid.ParamAttr(
                 name=self.token_emb_name, initializer=self.param_initializer))
-        emb_out, n_head_self_attn_mask = self._gen_input(
+        emb_out, attn_bias = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, input_mask, aux_emb=mask_emb)
 
-        recognition_out, checkpoints = self._encode(emb_out, n_head_self_attn_mask)
-        return recognition_out, checkpoints
+        return self._encode(emb_out, attn_bias)
 
     def _calc_recognition_logits(self, enc_out):
         """Get the logits of latent recognition task.

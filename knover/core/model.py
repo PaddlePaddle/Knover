@@ -72,6 +72,8 @@ class Model(ABC):
         return group
 
     def __init__(self, args, place):
+        self.args = args
+
         self.place = place
         self.exe = fluid.Executor(place)
 

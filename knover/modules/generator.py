@@ -73,9 +73,6 @@ class Generator(object):
         self.mask_id = args.mask_id
         self.vocab_size = args.vocab_size
 
-        # model related
-        self.use_role = args.use_role
-
         # basic settings
         self.decoding_strategy = args.decoding_strategy
         self.ignore_unk = args.ignore_unk

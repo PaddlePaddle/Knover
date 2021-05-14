@@ -41,7 +41,6 @@ def setup_args():
 
 def save(args):
     """Save inference model."""
-    dev_count = 1
     gpu_id = 0
     place = fluid.CUDAPlace(gpu_id)
 
@@ -52,8 +51,7 @@ def save(args):
 
 
 if __name__ == "__main__":
-    if hasattr(paddle, "enable_static"):
-        paddle.enable_static()
+    paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     save(args)

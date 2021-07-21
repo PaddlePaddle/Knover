@@ -20,11 +20,17 @@ import paddle.fluid as fluid
 import paddle.fluid.core as core
 
 
-def get_tensor(tensor_name):
-    tensor = fluid.global_scope().find_var(tensor_name).get_tensor()
+def get_tensor(tensor_name, to_np=True):
+    var = fluid.global_scope().find_var(tensor_name)
+    if var is None:
+        return None
+    tensor = var.get_tensor()
     if tensor is None:
         return None
-    return np.array(tensor)
+    if to_np:
+        return np.array(tensor)
+    else:
+        return tensor
 
 
 def to_lodtensor(data, place, dtype=None):

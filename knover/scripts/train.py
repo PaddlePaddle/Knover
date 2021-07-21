@@ -178,7 +178,14 @@ def train(args):
     return
 
 
-def evaluate(task, model, generator, args, dev_count, gpu_id, training_step, tag=None):
+def evaluate(task,
+             model,
+             generator,
+             args,
+             dev_count,
+             gpu_id,
+             training_step,
+             tag=None):
     """Run evaluation.
 
     Run evaluation on dataset which is generated from a generator. Support evaluation on single GPU and multiple GPUs.
@@ -273,8 +280,7 @@ def save_model(model, save_path, tag, dev_count, gpu_id, args):
 
 
 if __name__ == "__main__":
-    if hasattr(paddle, "enable_static"):
-        paddle.enable_static()
+    paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     train(args)

@@ -84,12 +84,12 @@ class DialogReader(object):
         tokenizer_cls = getattr(tokenization, args.tokenizer)
         self.tokenizer = tokenizer_cls(args)
         self.vocab = self.tokenizer.vocab
-        self.pad_id = args.pad_id = self.vocab["[PAD]"]
-        self.bos_id = args.bos_id = self.vocab["[CLS]"]
-        self.eos_id = args.eos_id = self.vocab["[SEP]"]
-        self.unk_id = args.unk_id = self.vocab["[UNK]"]
-        self.mask_id = args.mask_id = self.vocab["[MASK]"]
-        self.vocab_size = args.get("vocab_size", 0)
+        self.pad_id = args.pad_id = self.tokenizer.pad_id
+        self.bos_id = args.bos_id = self.tokenizer.bos_id
+        self.eos_id = args.eos_id = self.tokenizer.eos_id
+        self.unk_id = args.unk_id = self.tokenizer.unk_id
+        self.mask_id = args.mask_id = self.tokenizer.mask_id
+        self.vocab_size = args.get("vocab_size", self.tokenizer.vocab_size)
         self.max_src_len = args.max_src_len
         self.max_tgt_len = args.max_tgt_len
         self.max_knowledge_len = args.max_knowledge_len
@@ -338,7 +338,7 @@ class DialogReader(object):
                 # if you change the numerical data format, you must to make sure the last part of
                 # numerical sequence is the target sequence
                 def rindex(lst, elem):
-                    return len(lst) - lst[-1:0:-1].index(elem) - 1
+                    return len(lst) - lst[::-1].index(elem) - 1
                 tgt_start_idx = rindex(cols[0], self.bos_id)
             record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=i)
             yield record

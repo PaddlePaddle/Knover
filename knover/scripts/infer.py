@@ -83,7 +83,7 @@ def infer(args):
         if step % args.log_steps == 0:
             time_cost = timer.pass_time
             print(f"\tstep: {step}, time: {time_cost:.3f}, "
-                  f"queue size: {infer_generator._queue.size()}, "
+                  f"queue size: {infer_generator.queue.size()}, "
                   f"speed: {step / time_cost:.3f} steps/s")
 
     time_cost = timer.pass_time
@@ -132,8 +132,7 @@ def infer(args):
 
 
 if __name__ == "__main__":
-    if hasattr(paddle, "enable_static"):
-        paddle.enable_static()
+    paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     infer(args)

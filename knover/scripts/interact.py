@@ -76,8 +76,7 @@ def interact(args):
 
 
 if __name__ == "__main__":
-    if hasattr(paddle, "enable_static"):
-        paddle.enable_static()
+    paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     interact(args)

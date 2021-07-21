@@ -124,6 +124,30 @@ class SentencePieceTokenizer(object):
     # Speedup tokenization.
     cached = {}
 
+    @property
+    def vocab_size(self):
+        return len(self.vocab)
+
+    @property
+    def bos_id(self):
+        return self.vocab["<s>"]
+
+    @property
+    def eos_id(self):
+        return self.vocab["</s>"]
+
+    @property
+    def pad_id(self):
+        return self.vocab["[PAD]"]
+
+    @property
+    def unk_id(self):
+        return self.vocab["<unk>"]
+
+    @property
+    def mask_id(self):
+        return self.vocab["[MASK]"]
+
     def preprocess(self, text):
         text = preprocess_text(text, lower=self.do_lower_case)
         return text
@@ -147,12 +171,11 @@ class SentencePieceTokenizer(object):
     def convert_tokens_to_ids(self, tokens):
         """Convert tokens to ids."""
         ret = []
-        unk_id = self.vocab["<unk>"]
         for token in tokens:
             if token in self.vocab:
                 ret.append(self.vocab[token])
             else:
-                ret.append(unk_id)
+                ret.append(self.unk_id)
         return ret
 
     def convert_ids_to_tokens(self, ids):

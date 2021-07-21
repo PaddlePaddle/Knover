@@ -34,7 +34,6 @@ class PlatoReader(DialogReader):
         batch_pos_ids = [record.pos_ids for record in batch_records]
         if self.use_role:
             batch_role_ids = [record.role_ids for record in batch_records]
-
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
 
         batch_size = len(batch_token_ids)

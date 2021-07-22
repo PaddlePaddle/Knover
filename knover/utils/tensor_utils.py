@@ -57,6 +57,12 @@ def gather(x, index):
     elif isinstance(x, list):
         return [gather(v, index) for v in x]
     elif isinstance(x, paddle.Tensor):
-        return paddle.gather(x, index)
+        if x.dtype == paddle.bool:
+            x = paddle.cast(x, "float32")
+            x = paddle.gather(x, index)
+            x = paddle.cast(x, "bool")
+            return x
+        else:
+            return paddle.gather(x, index)
     else:
         return x

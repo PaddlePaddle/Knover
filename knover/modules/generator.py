@@ -170,7 +170,7 @@ class Generator(object):
         state = self._process_final_state(state)
         predictions = {
             "finished_ids": state["predictions"],
-            "finished_score": state["score"][:, 0],
+            "finished_score": state["score"],
             "token_ids": inputs["token_ids"],
             "data_id": inputs["data_id"]
         }
@@ -242,6 +242,12 @@ class Sampling(Generator):
         state["is_finished"] = pred == self.eos_id
         # Pop parent_idx !!!
         state.pop("parent_idx", None)
+        return state
+
+    def _process_final_state(self, state):
+        bsz = state["batch_size"]
+        state["predictions"] = paddle.reshape(state["predictions"], [bsz, self.num_samples, -1])
+        state["score"] = paddle.reshape(state["score"], [bsz, self.num_samples])
         return state
 
 
@@ -336,17 +342,18 @@ class BeamSearch(Generator):
 
         # calcuate next scores
         if self.length_average:
-            next_scores = (paddle.log(probs) + paddle.unsqueeze(state["score"], [1]) * step) / (1 + step)
+            next_scores = (paddle.log(probs) + state["score"] * step) / (1 + step)
         elif self.length_penalty is not None:
             pre_w = math.pow((5 + step) / 6, self.length_penalty)
             cur_w = math.pow((6 + step) / 6, self.length_penalty)
-            next_scores = (paddle.log(probs) + paddle.unsqueeze(state["score"], [1]) * pre_w) / cur_w
+            next_scores = (paddle.log(probs) + state["score"] * pre_w) / cur_w
         else:
             next_scores = paddle.log(probs) + state["score"]
 
+
         # keep finished sequences' score
-        next_score = paddle.where(
-            paddle.expand_as(is_finished, next_score),
+        next_scores = paddle.where(
+            paddle.expand_as(is_finished, next_scores),
             paddle.expand_as(state["score"], next_scores) + paddle.expand_as(self.logits_after_finished - 1e9, next_scores),
             next_scores,
         )
@@ -361,7 +368,7 @@ class BeamSearch(Generator):
         beam_idx = topk_indices // self.vocab_size
         pred = topk_indices % self.vocab_size
 
-        topk_scores = paddle.reshape(topk_scores, [-1])
+        topk_scores = paddle.reshape(topk_scores, [-1, 1])
         pred = paddle.reshape(pred, [-1])
         pred = paddle.cast(pred, "int")
         pred = paddle.unsqueeze(pred, [1])
@@ -371,13 +378,13 @@ class BeamSearch(Generator):
         parent_idx = paddle.reshape(parent_idx, [-1])
 
         # model related input
-        state = gather(state, parent_idx)
-        state["token_ids"] = pred
-        state["pos_ids"] = state["pos_ids"] + 1
         state["tgt_generation_mask"] = paddle.concat([
             state["tgt_generation_mask"],
             paddle.unsqueeze(1 - paddle.cast(is_finished, "float32"), axis=[2])
         ], axis=2)
+        state = gather(state, parent_idx)
+        state["token_ids"] = pred
+        state["pos_ids"] = state["pos_ids"] + 1
 
         state["score"] = topk_scores
         state["predictions"] = paddle.concat([state["predictions"], pred], axis=1)
@@ -387,7 +394,6 @@ class BeamSearch(Generator):
 
     def _process_final_state(self, state):
         bsz = state["batch_size"]
-        # only return the best sequence
         state["predictions"] = paddle.reshape(state["predictions"], [bsz, self.beam_size, -1])
         state["score"] = paddle.reshape(state["score"], [bsz, self.beam_size])
         return state

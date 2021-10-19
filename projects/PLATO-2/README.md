@@ -38,13 +38,13 @@ Commands for running inference. The 32L PLATO-2 model requires a 32GB V100 while
 
 ```bash
 cd /path/to/Knover
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/24L_inference.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/24L_infer.conf
 ```
 
 ##### **PLATO-2, 32L**
 ```bash
 cd /path/to/Knover
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/32L_inference.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/32L_infer.conf
 ```
 
 After inference, you can find the output folder `./output` (by default). It contains the inference result `inference_output.txt`.
@@ -56,14 +56,14 @@ Commands for interaction with PLATO-2 models.
 
 ```bash
 cd /path/to/Knover
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/24L_interactive.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/24L_interact.conf
 ```
 
 ##### **PLATO-2, 32L**
 
 ```bash
 cd /path/to/Knover
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/32L_interactive.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/32L_interact.conf
 ```
 
 ## Training
@@ -76,11 +76,11 @@ Commands for multi-GPU training model. You can find the saved log in `/path/to/K
 ```bash
 cd /path/to/Knover
 # Run stage-1 training.
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/24L_train_stage-1.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/24L_train_stage-1.conf
 # Run stage-2.1 training.
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/24L_train_stage-2.1.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/24L_train_stage-2.1.conf
 # Run stage-2.2 training.
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/24L_train_stage-2.2.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/24L_train_stage-2.2.conf
 ```
 
 ##### **PLATO-2, 32L, pretrain**
@@ -90,18 +90,18 @@ This training requires at least one 32G V100.
 ```bash
 cd /path/to/Knover
 # Run stage-1 training.
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/32L_train_stage-1.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/32L_train_stage-1.conf
 # Run stage-2.1 training.
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/32L_train_stage-2.1.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/32L_train_stage-2.1.conf
 # Run stage-2.2 training.
-bash ./scripts/local/job.sh ./project/PLATO-2/pretrain/32L_train_stage-2.2.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/pretrain/32L_train_stage-2.2.conf
 ```
 
 ##### **PLATO-2, 24L, finetune**
 
 ```bash
 cd /path/to/Knover
-bash ./scripts/local/job.sh ./project/PLATO-2/finetune/24L_train.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/finetune/24L_train.conf
 ```
 
 ##### **PLATO-2, 32L, finetune**
@@ -109,7 +109,7 @@ bash ./scripts/local/job.sh ./project/PLATO-2/finetune/24L_train.conf
 This training requires at least one 32G V100.
 ```bash
 cd /path/to/Knover
-bash ./scripts/local/job.sh ./project/PLATO-2/finetune/32L_train.conf
+bash ./scripts/local/job.sh ./projects/PLATO-2/finetune/32L_train.conf
 ```
 
 ## Citation

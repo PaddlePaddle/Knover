@@ -26,7 +26,7 @@ def main(args):
             if pred["target"]:
                 candidates = []
                 cols = next(pred_f).strip().split("\t")
-                pred["response"] = cols[1]
+                pred["response"] = cols[-1]
         json.dump(preds, out_f, indent=2)
 
 

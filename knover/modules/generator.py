@@ -14,6 +14,7 @@
 """Generator class"""
 
 import numpy as np
+import paddle
 import paddle.fluid.layers as layers
 
 from knover.utils import str2bool
@@ -185,7 +186,7 @@ class Generator(object):
                     candidate_probs = sorted_probs * lt_cond
                     probs = candidate_probs / layers.reduce_sum(candidate_probs, dim=-1, keep_dim=True)
                     sampling_ids = layers.sampling_id(probs, dtype="int")
-                    sampling_ids = layers.index_sample(sorted_idx, layers.unsqueeze(sampling_ids, [1]))
+                    sampling_ids = paddle.index_sample(sorted_idx, layers.unsqueeze(sampling_ids, [1]))
                     sampling_ids = layers.squeeze(sampling_ids, [1])
                     probs = old_probs
                 else:

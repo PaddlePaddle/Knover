@@ -154,7 +154,7 @@ class DialogReader(object):
         s_token_ids_list = []
         for s in src.split("[SEP]"):
             s = s.strip()
-            if self.use_role:
+            if self.use_role and "\1" in s:
                 s, role_id = s.split("\1")
                 role_id = int(role_id)
                 role_id_list.append(role_id)
@@ -181,6 +181,9 @@ class DialogReader(object):
                 break
             idx -= 1
 
+        if self.use_role and len(role_id_list) == 0:
+            for i in range(len(s_token_ids_list)):
+                role_id_list.append((len(s_token_ids_list) - i) % 2)
         for i, s_token_ids in enumerate(s_token_ids_list[idx + 1:], idx + 1):
             src_token_ids += s_token_ids
             src_pos_ids += list(range(1, len(s_token_ids) + 1))
@@ -242,8 +245,11 @@ class DialogReader(object):
         # process tgt
         tgt = tgt.strip()
         if self.use_role:
-            tgt, role_id = tgt.split("\1")
-            role_id = int(role_id)
+            if "\1" in tgt:
+                tgt, role_id = tgt.split("\1")
+                role_id = int(role_id)
+            else:
+                role_id = 0
         if self.data_format == "tokenized":
             tgt_tokens = tgt.split(" ")
         else:
@@ -338,7 +344,10 @@ class DialogReader(object):
                 # if you change the numerical data format, you must to make sure the last part of
                 # numerical sequence is the target sequence
                 def rindex(lst, elem):
-                    return len(lst) - lst[::-1].index(elem) - 1
+                    try:
+                        return len(lst) - lst[::-1].index(elem) - 1
+                    except:
+                        return 0
                 tgt_start_idx = rindex(cols[0], self.bos_id)
             record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=i)
             yield record
@@ -600,10 +609,10 @@ class DialogReader(object):
         if self.use_role:
             batch_role_ids = [record.role_ids for record in batch_records]
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
+        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
+        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
         if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
+            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch["generation_mask"] = self._gen_self_attn_mask(

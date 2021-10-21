@@ -134,9 +134,13 @@ class DialogGeneration(Task):
                 if example is not None:
                     print("Example:", example.data_id)
                     print("Context:")
-                    for s in example.src.split(" [SEP] "):
+                    context = example.src.split(" [SEP] ")
+                    for i, s in enumerate(context):
                         if self.reader.use_role:
-                            s, role_id = s.split("\1")
+                            if "\1" in s:
+                                s, role_id = s.split("\1")
+                            else:
+                                role_id = (len(context) - i) % 2
                             s = f"{role_id}: {s}"
                         print("\t" + s)
                     if "knowledge" in example._fields:

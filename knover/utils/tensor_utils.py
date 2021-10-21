@@ -21,6 +21,7 @@ import paddle.fluid.core as core
 
 
 def get_tensor(tensor_name, to_np=True):
+    """Get tensor by name."""
     var = fluid.global_scope().find_var(tensor_name)
     if var is None:
         return None

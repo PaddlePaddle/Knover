@@ -39,16 +39,16 @@ fleetrun \
     ${distributed_args:-} \
     ./knover/scripts/infer.py \
     --is_distributed true \
-    --model ${model:-"Plato"} \
-    --task ${task:-"DialogGeneration"} \
+    --model ${model} \
+    --task ${task} \
     --vocab_path ${vocab_path} \
+    --config_path ${config_path} \
     --do_lower_case ${do_lower_case:-"false"} \
     --spm_model_file ${spm_model_file} \
-    --init_pretraining_params ${init_params:-""} \
+    --init_pretraining_params ${init_params} \
     --infer_file ${infer_file} \
     --data_format ${data_format:-"raw"} \
     --file_format ${file_format:-"file"} \
-    --config_path ${config_path} \
     --output_name ${output_name} \
     ${infer_args:-} \
     --in_tokens ${in_tokens:-"false"} \

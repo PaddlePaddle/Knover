@@ -40,10 +40,10 @@ class PlatoReader(DialogReader):
 
         # padding
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
+        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
+        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
         if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
+            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
 
         batch["generation_mask"] = self._gen_self_attn_mask(
             batch_token_ids,

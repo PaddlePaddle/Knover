@@ -16,8 +16,8 @@ mkdir -p ${save_path}
 
 python \
     ./knover/scripts/train.py \
-    --model ${model:-"Plato"} \
-    --task ${task:-"DialogGeneration"} \
+    --model ${model} \
+    --task ${task} \
     --vocab_path ${vocab_path} \
     --do_lower_case ${do_lower_case:-"false"} \
     --spm_model_file ${spm_model_file} \
@@ -29,7 +29,7 @@ python \
     --file_format ${file_format:-"file"} \
     --config_path ${config_path} \
     ${train_args:-} \
-    --in_tokens ${in_tokens:-"false"} \
+    --in_tokens ${in_tokens:-"true"} \
     --batch_size ${batch_size:-8192} \
     --learning_rate ${lr} \
     --warmup_steps ${warmup_steps:-0} \

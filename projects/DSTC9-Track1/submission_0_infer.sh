@@ -16,7 +16,7 @@ function download_tar() {
         local_dirname=$(dirname ${local_path})
         mkdir -p ${local_dirname}
 
-        if [[ $(realpath ${the_dir}) != $(realpath ${local_path}) ]]; then
+        if [[ $(readlink -f ${the_dir}) != $(readlink -f ${local_path}) ]]; then
             mv ${the_dir} ${local_path}
         fi
 

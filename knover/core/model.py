@@ -31,7 +31,7 @@ class ModelMeta(ABCMeta, type(nn.Layer)):
     pass
 
 
-class Model(ABC, nn.Layer, metaclass=ModelMeta):
+class Model(nn.Layer, metaclass=ModelMeta):
     """Basic model wrapper in dygraph mode.
 
     Attributes:
@@ -215,7 +215,8 @@ class Model(ABC, nn.Layer, metaclass=ModelMeta):
             metrics: A dict mapping metric names to corresponding metrics, which must include loss.
         """
         metrics["loss"].backward()
-        self.lr_scheduler.step()
+        if isinstance(self.lr_scheduler, paddle.optimizer.lr.LRScheduler):
+            self.lr_scheduler.step()
         metrics["scheduled_lr"] = self.optimizer.get_lr()
         self.optimizer.step()
         self.optimizer.clear_grad()

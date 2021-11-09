@@ -188,9 +188,9 @@ class DialogReader(object):
                 src_role_ids += [role_id_list[i]] * len(s_token_ids)
 
         field_values = {
-            "token_ids": src_token_ids,
-            "type_ids": [0] * len(src_token_ids),
-            "pos_ids": src_pos_ids
+            "token_ids": [self.bos_id] + src_token_ids,
+            "type_ids": [0] * (len(src_token_ids) + 1),
+            "pos_ids": [0] + src_pos_ids
         }
         if self.use_role:
             field_values["role_ids"] = [0] + src_role_ids
@@ -285,12 +285,6 @@ class DialogReader(object):
                     for k in field_values
                 }
 
-        # add BOS token
-        field_values = {
-            k: [self.bos_id] + field_values[k] if k == "token_ids" else [0] + field_values[k]
-            for k in field_values
-        }
-
         tgt_start_idx = len(field_values["token_ids"])
 
         if self.position_style == "relative":
@@ -330,17 +324,25 @@ class DialogReader(object):
             record = self._convert_example_to_record(example, is_infer)
             yield record
 
-    def _read_numerical_file(self, fp, delimiter=";"):
+    def _read_numerical_file(self, fp, phase, is_infer, delimiter=";"):
         """Read a file which contains numerical data and yield records."""
         for i, line in enumerate(fp):
             cols = line.strip().split(delimiter)
             cols = list(map(lambda x: list(map(int, x.split(" "))), cols))
             if len(cols) > self.num_numerical_fields:
                 cols = cols[:self.num_numerical_fields]
-            try:
-                tgt_start_idx = cols[0].index(self.bos_id, 1)
-            except ValueError:
+            if is_infer:
                 tgt_start_idx = len(cols[0])
+            else:
+                # get the start position of target sequence
+                # if you change the numerical data format, you must to make sure the last part of
+                # numerical sequence is the target sequence
+                def rindex(lst, elem):
+                    try:
+                        return len(lst) - lst[::-1].index(elem) - 1
+                    except:
+                        return 0
+                tgt_start_idx = rindex(cols[0], self.bos_id)
             record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=i)
             yield record
 
@@ -349,7 +351,7 @@ class DialogReader(object):
         def __wrapper__():
             with open_file(input_file) as fp:
                 if self.data_format == "numerical":
-                    records = self._read_numerical_file(fp)
+                    records = self._read_numerical_file(fp, phase, is_infer)
                 else:
                     records = self._read_tsv(fp, phase, is_infer)
                 for record in records:

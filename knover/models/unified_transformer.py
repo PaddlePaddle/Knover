@@ -81,6 +81,10 @@ class UnifiedTransformer(Model):
         # transformer encoder
         self.normalize_before = args.get("normalize_before", True)
         self.hidden_act = args.hidden_act
+        if not self.normalize_before:
+            self.input_norm = nn.LayerNorm(self.hidden_size)
+        else:
+            self.input_norm = None
         encoder_layer = nn.TransformerEncoderLayer(
             self.hidden_size,
             self.n_head,
@@ -148,6 +152,9 @@ class UnifiedTransformer(Model):
 
         if self.emb_mapping_in:
             emb_out = self.emb_mapping_fc(emb_out)
+
+        if self.input_norm is not None:
+            emb_out = self.input_norm(emb_out)
 
         # generate n-head self-attention mask
         self_attn_mask = paddle.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)

@@ -85,7 +85,7 @@ class Generator(object):
         self.length_average = args.length_average
         self.length_penalty = args.length_penalty
         if self.length_average and self.length_penalty is not None:
-            print(f"[WARMING] Using length_average only and ignore length_penalty settings ({self.length_penalty}).")
+            print(f"[WARNING] Using length_average only and ignore length_penalty settings ({self.length_penalty}).")
 
         # model related
         self.use_role = args.use_role

@@ -3,13 +3,14 @@ Knover is a toolkit for knowledge grounded dialogue generation based on PaddlePa
 
 ### What's New:
 
+* October 2021: We are opening [AG-DST](projects/AG-DST/README.md), an amendable generation for dialogue state tracking.
 * February 2021: We are opening our implementation (Team 19) in [DSTC9-Track1](projects/DSTC9-Track1/README.md).
 * July 2020: We are opening [PLATO-2](projects/PLATO-2/README.md), a large-scale generative model with latent space for open-domain dialogue systems.
 
 ## Requirements and Installation
 
 * python version >= 3.7
-* paddlepaddle-gpu version >= 2.0.1.
+* paddlepaddle-gpu version >= 2.1.2
     * You can install PaddlePaddle following [the instructions](https://www.paddlepaddle.org.cn/documentation/docs/en/install/index_en.html).
     * The specific version of PaddlePaddle is also based on your [CUDA version](https://developer.nvidia.com/cuda-downloads) (recommended version: 10.1) and [CuDNN version](https://developer.nvidia.com/rdp/cudnn-download) (recommended version: 7.6). See more information on [PaddlePaddle document about GPU support](https://www.paddlepaddle.org.cn/documentation/docs/en/install/index_en.html#paddlepaddle-s-support-for-gpu)
 * sentencepiece

@@ -74,6 +74,7 @@ class Model(nn.Layer, metaclass=ModelMeta):
 
     def __init__(self, args, place):
         super(Model, self).__init__()
+        self.args = args
         self._build_model(args)
 
         self.place = place
@@ -224,7 +225,7 @@ class Model(nn.Layer, metaclass=ModelMeta):
 
     def _get_lr_scheduler(self, args):
         if args.lr_scheduler == "noam" and args.warmup_steps <= 0:
-            print("[WARMING] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
+            print("[WARNING] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
         if args.lr_scheduler == "noam" and args.warmup_steps > 0:
             scheduler = NoamDecay(
                 1 / (args.warmup_steps * (args.learning_rate ** 2)),
@@ -287,6 +288,8 @@ class Model(nn.Layer, metaclass=ModelMeta):
         Returns:
             inputs: A dict mapping keys to corresponding Tensors.
         """
+        if isinstance(inputs, dict):
+            return {k: paddle.Tensor(v) for k, v in inputs.items()}
         if is_infer:
             return dict(zip(self.infer_feed_names, inputs))
         else:

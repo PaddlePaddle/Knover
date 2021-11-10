@@ -22,11 +22,18 @@ import paddle.fluid.core as core
 from paddle.nn.layer.transformer import MultiHeadAttention
 
 
-def get_tensor(tensor_name):
-    tensor = fluid.global_scope().find_var(tensor_name).get_tensor()
+def get_tensor(tensor_name, to_np=True):
+    """Get tensor by name."""
+    var = fluid.global_scope().find_var(tensor_name)
+    if var is None:
+        return None
+    tensor = var.get_tensor()
     if tensor is None:
         return None
-    return np.array(tensor)
+    if to_np:
+        return np.array(tensor)
+    else:
+        return tensor
 
 
 def pad_batch_data(insts, pad_id=0):

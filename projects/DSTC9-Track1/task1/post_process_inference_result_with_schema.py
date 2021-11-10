@@ -8,7 +8,8 @@ import json
 from tqdm import tqdm
 
 
-if __name__ == "__main__":
+def setup_args():
+    """Setup arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--pred_file", type=str, required=True)
     parser.add_argument("--out_file", type=str, required=True)
@@ -16,7 +17,11 @@ if __name__ == "__main__":
     parser.add_argument("--knowledge_file", type=str, required=True)
     parser.add_argument("--schema_desc_file", type=str, required=True)
     args = parser.parse_args()
+    return args
 
+
+def main(args):
+    """Main function."""
     with open(args.log_file) as f:
         logs = json.load(f)
     with open(args.knowledge_file) as f:
@@ -64,3 +69,8 @@ if __name__ == "__main__":
                 pred = {"target": False}
             preds.append(pred)
         json.dump(preds, out_f, indent=2)
+
+
+if __name__ == "__main__":
+    args = setup_args()
+    main(args)

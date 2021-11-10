@@ -130,11 +130,11 @@ class NSPReader(DialogReader):
         if not is_infer:
             batch_token_ids = batch_mask_token_ids
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
-        attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
+        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
+        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
         if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
+            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
+        attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
 
         batch["attention_mask"] = attention_mask
         batch["label_idx"] = label_idx

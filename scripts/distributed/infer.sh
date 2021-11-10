@@ -19,7 +19,8 @@ if [[ ${log_dir:-""} != "" ]]; then
     distributed_args="${distributed_args:-} --log_dir ${log_dir}"
 fi
 
-if [[ ${nsp_init_params:-""} != "" ]]; then
+# Process NSP model(for reranking in dialogue generation task).
+if [[ ${nsp_init_params:-} != "" ]]; then
     if [[ ! -e "${nsp_init_params}/__model__" ]]; then
         python -m \
             knover.scripts.save_inference_model \
@@ -32,24 +33,22 @@ if [[ ${nsp_init_params:-""} != "" ]]; then
             ${save_args:-} \
             --config_path ${config_path}
     fi
-    infer_args="${infer_args:-} --nsp_inference_model_path ${nsp_init_params}"
+    infer_args="--nsp_inference_model_path ${nsp_init_params} ${infer_args:-}"
 fi
 
 fleetrun \
     ${distributed_args:-} \
     ./knover/scripts/infer.py \
     --is_distributed true \
-    --model ${model:-"Plato"} \
-    --task ${task:-"DialogGeneration"} \
+    --model ${model} \
+    --task ${task} \
     --vocab_path ${vocab_path} \
-    --specials_path ${specials_path:-""} \
-    --do_lower_case ${do_lower_case:-"false"} \
+    --config_path ${config_path} \
     --spm_model_file ${spm_model_file} \
-    --init_pretraining_params ${init_params:-""} \
+    --init_pretraining_params ${init_params} \
     --infer_file ${infer_file} \
     --data_format ${data_format:-"raw"} \
     --file_format ${file_format:-"file"} \
-    --config_path ${config_path} \
     --output_name ${output_name} \
     ${infer_args:-} \
     --in_tokens ${in_tokens:-"false"} \

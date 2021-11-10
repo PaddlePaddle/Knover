@@ -21,7 +21,6 @@ import subprocess
 import time
 
 import numpy as np
-import paddle
 import paddle.fluid as fluid
 from paddle.distributed import fleet
 
@@ -53,9 +52,11 @@ def setup_args():
                         help="Display training / evaluation log information every X steps.")
     parser.add_argument("--validation_steps", type=int, default=1000,
                         help="Run validation every X training steps.")
-    parser.add_argument("--save_steps", type=int, default=5000,
-                        help="Save the lastest model every X training steps.")
-
+    parser.add_argument("--save_steps", type=int, default=0,
+                        help="Save the latest model every X training steps. "
+                        "If `save_steps = 0`, then it only keep the latest checkpoint.")
+    parser.add_argument("--eval_metric", type=str, default="-loss",
+                        help="Keep the checkpoint with best evaluation metric.")
     parser.add_argument("--save_checkpoint", type=str2bool, default=True,
                         help="Save completed checkpoint or parameters only. "
                         "The checkpoint contains all states for continuous training.")
@@ -104,13 +105,31 @@ def train(args):
         part_id=trainer_id,
         phase="train"
     )
-    valid_generator = task.get_data_loader(
-        model,
-        input_file=args.valid_file,
-        num_part=dev_count,
-        part_id=gpu_id,
-        phase="distributed_valid" if args.is_distributed else "valid"
-    )
+    valid_tags = []
+    valid_generators = []
+    for valid_file in args.valid_file.split(","):
+        if ":" in valid_file:
+            valid_tag, valid_file = valid_file.split(":")
+        else:
+            valid_tag = "valid"
+        valid_tags.append(valid_tag)
+        valid_generators.append(task.get_data_loader(
+            model,
+            input_file=valid_file,
+            num_part=dev_count,
+            part_id=gpu_id,
+            phase="distributed_valid" if args.is_distributed else "valid"
+        ))
+
+    # maintain best metric (init)
+    best_metric = -1e10
+    if args.eval_metric.startswith("-"):
+        scale = -1.0
+        eval_metric = args.eval_metric[1:]
+    else:
+        scale = 1.0
+        eval_metric = args.eval_metric
+    need_save = trainer_id == 0
 
     # start training
     timer = Timer()
@@ -134,9 +153,23 @@ def train(args):
             timer.reset()
 
         if step % args.validation_steps == 0:
-            evaluate(task, model, valid_generator, args, dev_count, gpu_id, step)
+            for valid_tag, valid_generator in zip(valid_tags, valid_generators):
+                eval_metrics = evaluate(task, model, valid_generator, args, dev_count, gpu_id, step, tag=valid_tag)
+                if valid_tag == "valid":
+                    valid_metrics = eval_metrics
 
-        if step % args.save_steps == 0:
+            # save latest model
+            if args.save_steps <= 0 and need_save:
+                save_model(model, args.save_path, "latest", dev_count, gpu_id, args)
+            # maintain best metric (update)
+            if valid_metrics[eval_metric] * scale > best_metric:
+                best_metric = valid_metrics[eval_metric] * scale
+                print(f"Get better valid metric: {eval_metric} = {valid_metrics[eval_metric]}")
+                # save best model (with best evaluation metric)
+                if need_save:
+                    save_model(model, args.save_path, "best", dev_count, gpu_id, args)
+
+        if args.save_steps > 0 and step % args.save_steps == 0 and need_save:
             save_model(model, args.save_path, f"step_{step}", dev_count, gpu_id, args)
 
         timer.start()
@@ -151,7 +184,8 @@ def evaluate(task,
              args,
              dev_count,
              gpu_id,
-             training_step):
+             training_step,
+             tag=None):
     """Run evaluation.
 
     Run evaluation on dataset which is generated from a generator. Support evaluation on single GPU and multiple GPUs.
@@ -170,7 +204,7 @@ def evaluate(task,
     """
     outputs = None
     print("=" * 80)
-    print("Evaluation:")
+    print(f"Evaluation: {tag}")
     timer = Timer()
     timer.start()
     for step, data in enumerate(generator(), 1):
@@ -233,7 +267,10 @@ def evaluate(task,
 
 
 def save_model(model, save_path, tag, dev_count, gpu_id, args):
-    """Save model."""
+    """Save model.
+
+    In normal mode, only the master GPU need to save the model.
+    """
     path = os.path.join(save_path, tag)
     if gpu_id == 0:
         print(f"Saving model into {path}.")

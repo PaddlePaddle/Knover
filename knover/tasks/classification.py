@@ -72,6 +72,7 @@ class Classification(Task):
         if outputs is None:
             raise ValueError("metrics is None")
         outputs = dict(outputs)
+        # pop statistics
         outputs.pop("batch_size", None)
         if self.num_classes == 2:
             tp = outputs.pop("stat_tp")

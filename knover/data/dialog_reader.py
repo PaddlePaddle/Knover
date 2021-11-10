@@ -55,7 +55,7 @@ class DialogReader(object):
                            help="The input file format.")
         group.add_argument("--data_format", type=str, default="raw",
                            choices=["raw", "tokenized", "numerical"],
-                           help="The data format of each file")
+                           help="The data format of each file.")
         group.add_argument("--in_tokens", type=str2bool, default=False,
                            help="Whether batchify examples by the number of tokens.")
         group.add_argument("--batch_size", type=int, default=16,
@@ -73,8 +73,8 @@ class DialogReader(object):
                            help="The size of sorting pool. If it is positive, we will generate batches from sorted "
                            "example pool (containing X examples).")
 
-        group = parser.add_argument_group("Tokenizer")
-        group.add_argument("--tokenizer", type=str, default="SentencePieceTokenizer")
+        tokenizer_group = parser.add_argument_group("Tokenizer")
+        tokenizer_group.add_argument("--tokenizer", type=str, default="SentencePieceTokenizer")
         args, _ = parser.parse_known_args()
         tokenizer_cls = getattr(tokenization, args.tokenizer)
         tokenizer_cls.add_cmdline_args(parser)
@@ -84,12 +84,12 @@ class DialogReader(object):
         tokenizer_cls = getattr(tokenization, args.tokenizer)
         self.tokenizer = tokenizer_cls(args)
         self.vocab = self.tokenizer.vocab
-        self.pad_id = args.pad_id = self.vocab["[PAD]"]
-        self.bos_id = args.bos_id = self.vocab["[CLS]"]
-        self.eos_id = args.eos_id = self.vocab["[SEP]"]
-        self.unk_id = args.unk_id = self.vocab["[UNK]"]
-        self.mask_id = args.mask_id = self.vocab["[MASK]"]
-        self.vocab_size = args.get("vocab_size", 0)
+        self.pad_id = args.pad_id = self.tokenizer.pad_id
+        self.bos_id = args.bos_id = self.tokenizer.bos_id
+        self.eos_id = args.eos_id = self.tokenizer.eos_id
+        self.unk_id = args.unk_id = self.tokenizer.unk_id
+        self.mask_id = args.mask_id = self.tokenizer.mask_id
+        self.vocab_size = args.get("vocab_size", self.tokenizer.vocab_size)
         self.max_src_len = args.max_src_len
         self.max_tgt_len = args.max_tgt_len
         self.max_knowledge_len = args.max_knowledge_len
@@ -154,7 +154,7 @@ class DialogReader(object):
         s_token_ids_list = []
         for s in src.split("[SEP]"):
             s = s.strip()
-            if self.use_role:
+            if self.use_role and "\1" in s:
                 s, role_id = s.split("\1")
                 role_id = int(role_id)
                 role_id_list.append(role_id)
@@ -181,6 +181,9 @@ class DialogReader(object):
                 break
             idx -= 1
 
+        if self.use_role and len(role_id_list) == 0:
+            for i in range(len(s_token_ids_list)):
+                role_id_list.append((len(s_token_ids_list) - i) % 2)
         for i, s_token_ids in enumerate(s_token_ids_list[idx + 1:], idx + 1):
             src_token_ids += s_token_ids
             src_pos_ids += list(range(1, len(s_token_ids) + 1))
@@ -242,8 +245,11 @@ class DialogReader(object):
         # process tgt
         tgt = tgt.strip()
         if self.use_role:
-            tgt, role_id = tgt.split("\1")
-            role_id = int(role_id)
+            if "\1" in tgt:
+                tgt, role_id = tgt.split("\1")
+                role_id = int(role_id)
+            else:
+                role_id = 0
         if self.data_format == "tokenized":
             tgt_tokens = tgt.split(" ")
         else:
@@ -603,10 +609,10 @@ class DialogReader(object):
         if self.use_role:
             batch_role_ids = [record.role_ids for record in batch_records]
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=self.pad_id)
+        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
+        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
         if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
+            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch["generation_mask"] = self._gen_self_attn_mask(

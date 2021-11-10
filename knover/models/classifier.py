@@ -92,17 +92,18 @@ class Classifier(UnifiedTransformer):
         # statistics for recall & precision & f1
         if self.num_classes == 2:
             pred = layers.argmax(cls_softmax, axis=1)
+            label = layers.squeeze(inputs["label"], axes=[1])
             metrics["stat_tp"] = layers.reduce_sum(
-                layers.logical_and(pred == 1, inputs["label"] == 1).astype("float32")
+                layers.logical_and(pred == 1, label == 1).astype("float32")
             )
             metrics["stat_fp"] = layers.reduce_sum(
-                layers.logical_and(pred == 1, inputs["label"] == 0).astype("float32")
+                layers.logical_and(pred == 1, label == 0).astype("float32")
             )
             metrics["stat_tn"] = layers.reduce_sum(
-                layers.logical_and(pred == 0, inputs["label"] == 0).astype("float32")
+                layers.logical_and(pred == 0, label == 0).astype("float32")
             )
             metrics["stat_fn"] = layers.reduce_sum(
-                layers.logical_and(pred == 0, inputs["label"] == 1).astype("float32")
+                layers.logical_and(pred == 0, label == 1).astype("float32")
             )
         return metrics
 

@@ -16,8 +16,8 @@
 import argparse
 from collections import namedtuple
 
-from termcolor import colored, cprint
 import paddle.fluid as fluid
+from termcolor import colored, cprint
 
 import knover.models as models
 from knover.tasks.dialog_generation import DialogGeneration

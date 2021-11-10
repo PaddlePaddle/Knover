@@ -20,7 +20,7 @@ import paddle.fluid.layers as layers
 from knover.models import register_model
 from knover.core.model import Model
 from knover.models.unified_transformer import UnifiedTransformer
-from knover.modules.transformer_block import encoder, pre_process_layer
+from knover.modules.transformer_block import pre_process_layer
 from knover.utils import repeat_array_or_tensor
 from knover.utils import str2bool
 
@@ -125,11 +125,10 @@ class Plato(UnifiedTransformer):
             dtype=self.dtype,
             param_attr=fluid.ParamAttr(
                 name=self.token_emb_name, initializer=self.param_initializer))
-        emb_out, n_head_self_attn_mask = self._gen_input(
+        emb_out, attn_bias = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, input_mask, aux_emb=mask_emb)
 
-        recognition_out, checkpoints = self._encode(emb_out, n_head_self_attn_mask)
-        return recognition_out, checkpoints
+        return self._encode(emb_out, attn_bias)
 
     def _calc_recognition_logits(self, enc_out):
         """Get the logits of latent recognition task.
@@ -221,7 +220,8 @@ class Plato(UnifiedTransformer):
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
         if len(bow_idx.shape) == 2 and bow_idx.shape[1] == 1:
-            bow_feat = layers.gather(input=enc_out, index=bow_idx)
+            enc_out = layers.squeeze(enc_out, [1])
+            bow_feat = layers.gather(input=enc_out, index=bow_idx, overwrite=False)
         elif len(bow_idx.shape) == 2 and bow_idx.shape[1] == 2:
             bow_feat = layers.gather_nd(input=enc_out, index=bow_idx)
         else:

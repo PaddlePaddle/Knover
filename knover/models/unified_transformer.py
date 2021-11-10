@@ -157,17 +157,17 @@ class UnifiedTransformer(Model):
             emb_out = self.input_norm(emb_out)
 
         # generate n-head self-attention mask
-        self_attn_mask = paddle.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
-        n_head_self_attn_mask = paddle.unsqueeze(self_attn_mask, [1])
+        attn_bias = paddle.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
+        attn_bias = paddle.unsqueeze(attn_bias, [1])
 
-        return emb_out, n_head_self_attn_mask
+        return emb_out, attn_bias
 
     def _generation_network(self,
                             token_ids,
                             type_ids,
                             pos_ids,
-                            role_ids,
-                            generation_mask,
+                            role_ids=None,
+                            generation_mask=None,
                             aux_emb=None):
         """Run Transformer generation network.
 
@@ -182,13 +182,13 @@ class UnifiedTransformer(Model):
         Returns:
             The output embeddings of Transformer.
         """
-        emb_input, n_head_self_attn_mask = self._gen_input(
+        emb_input, attn_bias = self._gen_input(
             token_ids, type_ids, pos_ids, role_ids, generation_mask, aux_emb=aux_emb)
         if self._generation_caches is None:
-            enc_out =  self._encode(emb_input, n_head_self_attn_mask)
+            enc_out =  self._encode(emb_input, attn_bias)
         else:
             enc_out, self._generation_caches = self._encode(
-                emb_input, n_head_self_attn_mask, self._generation_caches)
+                emb_input, attn_bias, self._generation_caches)
         return enc_out
 
     def _generation_step(self, state):
@@ -205,18 +205,19 @@ class UnifiedTransformer(Model):
         logits = self._calc_logits(enc_out)
         return logits
 
-    def _encode(self, emb_input, n_head_self_attn_mask, caches=None):
+    def _encode(self, emb_input, attn_bias, caches=None):
         """Run Transformer encode pass.
 
         Args:
-            emb_input: represents the input embeddings fo Transformer, shape is [batch_size, max_seq_len, hidden_dim]
-            n_head_self_attn_mask: represents the attention masking matrix,
-                shape is [batch_size, num_heads, max_seq_len, max_seq_len]
+            emb_input: represents the input embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_size]
+            attn_bias: represents the attention masking matrix, shape is [batch_size, 1, max_seq_len, max_seq_len]
+            caches: a dict, the caches used in efficient decoding, which cache Ks and Vs of memory in each MHA.
+            gather_idx: a index tensor, which determine which branch is used to generate next token.
 
         Returns:
             The output embeddings of Transformer.
         """
-        return self.encoder(emb_input, n_head_self_attn_mask, caches)
+        return self.encoder(emb_input, attn_bias, caches)
 
     def _calc_logits(self, enc_out, tgt_idx=None):
         """Get the logits of generation task.
@@ -224,7 +225,7 @@ class UnifiedTransformer(Model):
         The network may share weight with token embeddings.
 
         Args:
-            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_dim]
+            enc_out: the output embeddings of Transformer, shape is [batch_size, max_seq_len, hidden_size]
             tgt_idx (optional): the indices of prediction tokens, shape is [num_predictions, 2].
 
         Returns:
@@ -248,7 +249,6 @@ class UnifiedTransformer(Model):
         else:
             logits = self.lm_out_fc(seq_trans_feat)
         return logits
-
 
     def forward(self, inputs, is_infer=False):
         """Run model main forward."""

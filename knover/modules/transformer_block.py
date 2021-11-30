@@ -15,8 +15,33 @@
 
 from functools import partial
 
+import paddle
 import paddle.fluid as fluid
 import paddle.fluid.layers as layers
+
+
+def _build_linear_column_parallel(x, n_in, n_out, name, initializer, num_partitions, part_id):
+    return paddle.distributed.split(
+        x,
+        size=(n_in, n_out),
+        operation="linear",
+        axis=1,
+        gather_out=False,
+        num_partitions=num_partitions,
+        weight_attr=fluid.ParamAttr(name=name + f"_{part_id}.w_0", initializer=initializer),
+        bias_attr=name + f"_{part_id}.b_0")
+
+
+def _build_linear_row_parallel(x, n_in, n_out, name, initializer, num_partitions, part_id):
+    return paddle.distributed.split(
+        x,
+        size=(n_in, n_out),
+        operation="linear",
+        axis=0,
+        gather_out=True,
+        num_partitions=num_partitions,
+        weight_attr=fluid.ParamAttr(name=name + f"_{part_id}.w_0", initializer=initializer),
+        bias_attr=name + ".b_0")
 
 
 def multi_head_attention(queries,
@@ -32,7 +57,8 @@ def multi_head_attention(queries,
                          gather_idx=None,
                          store=False,
                          param_initializer=None,
-                         name="multi_head_att"):
+                         name="multi_head_att",
+                         topo=None):
     """Multi-Head Attention.
 
     Note that attn_bias is added to the logit before computing softmax activiation to
@@ -46,27 +72,53 @@ def multi_head_attention(queries,
 
     def __compute_qkv(queries, keys, values, n_head, d_key, d_value):
         """Add linear projection to queries, keys, and values."""
-        q = layers.fc(input=queries,
-                      size=d_key * n_head,
-                      num_flatten_dims=2,
-                      param_attr=fluid.ParamAttr(
-                          name=name + "_query_fc.w_0",
-                          initializer=param_initializer),
-                      bias_attr=name + "_query_fc.b_0")
-        k = layers.fc(input=keys,
-                      size=d_key * n_head,
-                      num_flatten_dims=2,
-                      param_attr=fluid.ParamAttr(
-                          name=name + "_key_fc.w_0",
-                          initializer=param_initializer),
-                      bias_attr=name + "_key_fc.b_0")
-        v = layers.fc(input=values,
-                      size=d_value * n_head,
-                      num_flatten_dims=2,
-                      param_attr=fluid.ParamAttr(
-                          name=name + "_value_fc.w_0",
-                          initializer=param_initializer),
-                      bias_attr=name + "_value_fc.b_0")
+        if topo is None or topo.mp_info.size == 1:
+            q = layers.fc(input=queries,
+                          size=d_key * n_head,
+                          num_flatten_dims=2,
+                          param_attr=fluid.ParamAttr(
+                              name=name + "_query_fc.w_0",
+                              initializer=param_initializer),
+                          bias_attr=name + "_query_fc.b_0")
+            k = layers.fc(input=keys,
+                          size=d_key * n_head,
+                          num_flatten_dims=2,
+                          param_attr=fluid.ParamAttr(
+                              name=name + "_key_fc.w_0",
+                              initializer=param_initializer),
+                          bias_attr=name + "_key_fc.b_0")
+            v = layers.fc(input=values,
+                          size=d_value * n_head,
+                          num_flatten_dims=2,
+                          param_attr=fluid.ParamAttr(
+                              name=name + "_value_fc.w_0",
+                              initializer=param_initializer),
+                          bias_attr=name + "_value_fc.b_0")
+        else:
+            q = _build_linear_column_parallel(
+                queries,
+                d_model,
+                d_key * n_head,
+                f"{name}_query_fc",
+                param_initializer,
+                topo.mp_info.size,
+                topo.mp_info.rank)
+            k = _build_linear_column_parallel(
+                keys,
+                d_model,
+                d_key * n_head,
+                f"{name}_key_fc",
+                param_initializer,
+                topo.mp_info.size,
+                topo.mp_info.rank)
+            v = _build_linear_column_parallel(
+                values,
+                d_model,
+                d_value * n_head,
+                f"{name}_value_fc",
+                param_initializer,
+                topo.mp_info.size,
+                topo.mp_info.rank)
         return q, k, v
 
     def __split_heads(x, n_head):
@@ -109,6 +161,7 @@ def multi_head_attention(queries,
         """Scaled Dot-Product Attention"""
         scaled_q = layers.scale(x=q, scale=d_key ** -0.5)
         product = layers.matmul(x=scaled_q, y=k, transpose_y=True)
+        product = layers.matmul(x=q, y=k, transpose_y=True, alpha=d_key ** -0.5)
         if attn_bias:
             product += attn_bias
         weights = layers.softmax(product, use_cudnn=True)
@@ -122,6 +175,8 @@ def multi_head_attention(queries,
         return out
 
     q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
+    if topo is not None and topo.mp_info.size > 1:
+        n_head = n_head // topo.mp_info.size
 
     if cache is not None:  # use cache and concat time steps
         # Since the inplace reshape in __split_heads changes the shape of k and
@@ -150,19 +205,29 @@ def multi_head_attention(queries,
     k = __split_heads(k, n_head)
     v = __split_heads(v, n_head)
 
-    ctx_multiheads = __scaled_dot_product_attention(q, k, v, attn_bias, d_key,
-                                                  dropout_rate)
+    ctx_multiheads = __scaled_dot_product_attention(q, k, v, attn_bias, d_key, dropout_rate)
 
     out = __combine_heads(ctx_multiheads)
 
     # Project back to the model size.
-    proj_out = layers.fc(input=out,
-                         size=d_model,
-                         num_flatten_dims=2,
-                         param_attr=fluid.ParamAttr(
-                             name=name + "_output_fc.w_0",
-                             initializer=param_initializer),
-                         bias_attr=name + "_output_fc.b_0")
+    if topo is None or topo.mp_info.size == 1:
+        proj_out = layers.fc(input=out,
+                             size=d_model,
+                             num_flatten_dims=2,
+                             param_attr=fluid.ParamAttr(
+                                 name=name + "_output_fc.w_0",
+                                 initializer=param_initializer),
+                             bias_attr=name + "_output_fc.b_0")
+    else:
+        n_head = n_head * topo.mp_info.size
+        proj_out = _build_linear_row_parallel(
+            out,
+            d_value * n_head,
+            d_model,
+            f"{name}_output_fc",
+            param_initializer,
+            topo.mp_info.size,
+            topo.mp_info.rank)
     return proj_out
 
 
@@ -172,36 +237,64 @@ def positionwise_feed_forward(x,
                               dropout_rate,
                               hidden_act,
                               param_initializer=None,
-                              name="ffn"):
+                              name="ffn",
+                              topo=None):
     """Position-wise Feed-Forward Networks.
 
     This module consists of two linear transformations with a ReLU activation
     in between, which is applied to each position separately and identically.
     """
-    hidden = layers.fc(input=x,
-                       size=d_inner_hid,
-                       num_flatten_dims=2,
-                       act=hidden_act,
-                       param_attr=fluid.ParamAttr(
-                           name=name + "_fc_0.w_0",
-                           initializer=param_initializer),
-                       bias_attr=name + "_fc_0.b_0")
+    if topo is None or topo.mp_info.size == 1:
+        hidden = layers.fc(input=x,
+                           size=d_inner_hid,
+                           num_flatten_dims=2,
+                           act=hidden_act,
+                           param_attr=fluid.ParamAttr(
+                               name=name + "_fc_0.w_0",
+                               initializer=param_initializer),
+                           bias_attr=name + "_fc_0.b_0")
+    else:
+        hidden = _build_linear_column_parallel(
+            x,
+            d_hid,
+            d_inner_hid,
+            f"{name}_fc_0",
+            param_initializer,
+            topo.mp_info.size,
+            topo.mp_info.rank)
+        hidden = getattr(layers, hidden_act)(hidden)
     if dropout_rate:
         hidden = layers.dropout(
             hidden,
             dropout_prob=dropout_rate,
             dropout_implementation="upscale_in_train",
             is_test=False)
-    out = layers.fc(input=hidden,
-                    size=d_hid,
-                    num_flatten_dims=2,
-                    param_attr=fluid.ParamAttr(
-                        name=name + "_fc_1.w_0", initializer=param_initializer),
-                    bias_attr=name + "_fc_1.b_0")
+
+    if topo is None or topo.mp_info.size == 1:
+        out = layers.fc(input=hidden,
+                        size=d_hid,
+                        num_flatten_dims=2,
+                        param_attr=fluid.ParamAttr(
+                            name=name + "_fc_1.w_0", initializer=param_initializer),
+                        bias_attr=name + "_fc_1.b_0")
+    else:
+        out = _build_linear_row_parallel(
+            hidden,
+            d_inner_hid,
+            d_hid,
+            f"{name}_fc_1",
+            param_initializer,
+            topo.mp_info.size,
+            topo.mp_info.rank)
     return out
 
 
-def pre_post_process_layer(prev_out, out, process_cmd, dropout_rate=0., epsilon=1e-5, name=""):
+def pre_post_process_layer(prev_out,
+                           out,
+                           process_cmd,
+                           dropout_rate=0.,
+                           epsilon=1e-5,
+                           name=""):
     """Add a pre-process or post-process between sub layers.
 
     Add residual connection, layer normalization and droput to the out tensor
@@ -237,7 +330,7 @@ pre_process_layer = partial(pre_post_process_layer, None)
 post_process_layer = pre_post_process_layer
 
 
-def encoder_layer(input,
+def encoder_layer(enc_input,
                   attn_bias,
                   n_head,
                   d_key,
@@ -255,7 +348,8 @@ def encoder_layer(input,
                   epsilon=1e-5,
                   cache=None,
                   gather_idx=None,
-                  store=False):
+                  store=False,
+                  topo=None):
     """A Transformer encoder block.
 
     The encoder layers that can be stacked to form a deep encoder.
@@ -266,7 +360,7 @@ def encoder_layer(input,
     """
     attn_output = multi_head_attention(
         pre_process_layer(
-            input,
+            enc_input,
             preprocess_cmd,
             prepostprocess_dropout,
             epsilon=epsilon,
@@ -283,9 +377,10 @@ def encoder_layer(input,
         name=name + "_multi_head_att",
         cache=cache,
         gather_idx=gather_idx,
-        store=store)
+        store=store,
+        topo=topo)
     attn_output = post_process_layer(
-        input,
+        enc_input,
         attn_output,
         postprocess_cmd,
         prepostprocess_dropout,
@@ -303,7 +398,8 @@ def encoder_layer(input,
         relu_dropout,
         hidden_act,
         param_initializer=param_initializer,
-        name=name + "_ffn")
+        name=name + "_ffn",
+        topo=topo)
     ffd_output = post_process_layer(
         attn_output,
         ffd_output,
@@ -336,7 +432,8 @@ def encoder(enc_input,
             param_share="normal",
             caches=None,
             gather_idx=None,
-            store=False):
+            store=False,
+            topo=None):
     """A Transformer Encoder.
 
     The encoder is composed of a stack of identical layers returned by calling
@@ -379,7 +476,8 @@ def encoder(enc_input,
             name=names[i],
             cache=caches[i] if caches is not None else None,
             gather_idx=gather_idx,
-            store=store)
+            store=store,
+            topo=topo)
         checkpoints.extend(cps)
         enc_input = enc_output
     enc_output = pre_process_layer(

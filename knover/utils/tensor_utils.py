@@ -16,8 +16,33 @@
 from itertools import chain
 
 import numpy as np
+import paddle
 import paddle.fluid as fluid
 import paddle.fluid.core as core
+
+
+try:
+    gpu_prop = paddle.device.cuda.get_device_properties()
+    if "A100" in gpu_prop.name:
+        TENSOR_CORE_MULTI = 1
+    elif "V100" in gpu_prop.name:
+        TENSOR_CORE_MULTI = 8
+    else:
+        TENSOR_CORE_MULTI = 1
+except:
+    print("You can upgarde PaddlePaddle >= 2.2.0 for better AMP performance.")
+    TENSOR_CORE_MULTI = 1
+
+
+def to_optimized_size(sz):
+    """Padding sequence to speedup matmul OP.
+
+    According to the tensor cores documentation from NVIDIA, the matmul OP in fp16 must all be multiples of
+    TENSOR_CORE_MULTI to get the speedup from fp16.
+    See more detail:
+    https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html#requirements-tc
+    """
+    return (sz + TENSOR_CORE_MULTI - 1) // TENSOR_CORE_MULTI * TENSOR_CORE_MULTI
 
 
 def get_tensor(tensor_name, to_np=True):
@@ -56,7 +81,7 @@ def to_lodtensor(data, place, dtype=None):
 
 def pad_batch_data(insts, pad_id=0):
     """Pad the instances to the max sequence length in batch. """
-    max_len = max(map(len, insts))
+    max_len = to_optimized_size(max(map(len, insts)))
     inst_data = np.array([list(inst) + [pad_id] * (max_len - len(inst)) for inst in insts])
     return inst_data.astype("int64").reshape([-1, max_len, 1])
 

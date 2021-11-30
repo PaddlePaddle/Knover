@@ -16,6 +16,7 @@
 from abc import abstractmethod, ABC
 import os
 
+from paddle.distributed import init_parallel_env
 import paddle.distributed.fleet as fleet
 import paddle.fluid as fluid
 import paddle.fluid.layers as layers
@@ -197,6 +198,8 @@ class Model(ABC):
         self.startup_program = fluid.Program()
 
         if self.run_infer:
+            if self.is_distributed and self.use_sharding:
+                init_parallel_env()
             # build inference program
             self.infer_program = fluid.Program()
             with fluid.program_guard(self.infer_program, self.startup_program):

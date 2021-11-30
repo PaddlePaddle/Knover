@@ -17,6 +17,7 @@ import numpy as np
 import paddle
 import paddle.fluid.layers as layers
 
+import knover.modules.ops as ops
 from knover.utils import str2bool
 
 
@@ -158,7 +159,7 @@ class Generator(object):
                     input=probs, k=beam_size)
             else:
                 if self.decoding_strategy.startswith("sampling"):
-                    sampling_ids = layers.sampling_id(probs, dtype="int")
+                    sampling_ids = ops.sampling_id(probs)
                 elif self.decoding_strategy.startswith("topk_sampling"):
                     topk_probs, _ = layers.topk(input=probs, k=self.topk)
                     ge_cond = layers.cast(
@@ -166,7 +167,7 @@ class Generator(object):
                         "float32")
                     old_probs = probs
                     probs = probs * ge_cond / layers.reduce_sum(topk_probs, dim=-1, keep_dim=True)
-                    sampling_ids = layers.sampling_id(probs, dtype="int")
+                    sampling_ids = ops.sampling_id(probs)
                     probs = old_probs
                 elif self.decoding_strategy.startswith("topp_sampling"):
                     sorted_probs, sorted_idx = layers.argsort(probs, descending=True)
@@ -185,7 +186,7 @@ class Generator(object):
                     old_probs = probs
                     candidate_probs = sorted_probs * lt_cond
                     probs = candidate_probs / layers.reduce_sum(candidate_probs, dim=-1, keep_dim=True)
-                    sampling_ids = layers.sampling_id(probs, dtype="int")
+                    sampling_ids = ops.sampling_id(probs)
                     sampling_ids = paddle.index_sample(sorted_idx, layers.unsqueeze(sampling_ids, [1]))
                     sampling_ids = layers.squeeze(sampling_ids, [1])
                     probs = old_probs

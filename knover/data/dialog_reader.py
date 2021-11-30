@@ -565,7 +565,7 @@ class DialogReader(object):
             if phase == "train":
                 batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id)
             elif phase.startswith("distributed"):
-                batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id, is_test=True)
+                batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id, is_test=is_infer)
 
             try:
                 for epoch_index in range(num_epochs):

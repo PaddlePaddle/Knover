@@ -35,6 +35,23 @@ if [[ ${nsp_init_params:-} != "" ]]; then
     infer_args="--nsp_inference_model_path ${nsp_init_params} ${infer_args:-}"
 fi
 
+if [[ $infer_args =~ "--use_sharding true" ]]; then
+    if [[ ${CUDA_VISIBLE_DEVICES:-""} != "" ]]; then
+        CUDA_VISIBLE_DEVICE_ARRAY=(${CUDA_VISIBLE_DEVICES//,/ })
+        MP_DEGREE=${#CUDA_VISIBLE_DEVICE_ARRAY[@]}
+    else
+        MP_DEGREE=${cards:-$(nvidia-smi -L | wc -l)}
+    fi
+    infer_args="$infer_args --mp_degree $MP_DEGREE"
+    if [[ ! -d ${init_params}-mp${MP_DEGREE} ]]; then
+        python ./knover/tools/split_checkpoint.py \
+            --param_path ${init_params} \
+            --save_path ${init_params}-mp${MP_DEGREE} \
+            --num_partitions ${MP_DEGREE}
+    fi
+    init_params="${init_params}-mp${MP_DEGREE}"
+fi
+
 fleetrun \
     ${distributed_args:-} \
     ./knover/scripts/infer.py \

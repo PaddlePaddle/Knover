@@ -23,6 +23,7 @@ import paddle.fluid.layers as layers
 import knover.optim
 import knover.optim.lr_scheduler as lr_scheduler
 from knover.utils import to_lodtensor, get_tensor, str2bool
+from knover.utils.topo import Topology
 
 
 class Model(ABC):
@@ -47,6 +48,8 @@ class Model(ABC):
                            choices=["AdamW"])
         group.add_argument("-lr", "--learning_rate", type=float, default=1e-5,
                            help="The peak learning rate for optimizer.")
+        group.add_argument("--beta1", type=float, default=0.9)
+        group.add_argument("--beta2", type=float, default=0.999)
         group.add_argument("--warmup_steps", type=int, default=0,
                            help="The warmup steps.")
         group.add_argument("--lr_scheduler", type=str, default="noam",
@@ -61,13 +64,21 @@ class Model(ABC):
         group.add_argument("--max_grad_norm", type=float, default=.1,
                            help="The maximum norm of gradient.")
 
-        # training related
+        # fleet related
         group.add_argument("--use_recompute", type=str2bool, default=False,
                            help="Whether to use recompute for saving memory.")
+        group.add_argument("--checkpointing_every_n_layers", type=int, default=1,
+                           help="Create checkpointing every n layers.")
         group.add_argument("--use_amp", type=str2bool, default=False,
                            help="Whether to use automatic mixed precision(AMP) training")
         group.add_argument("--amp_loss_scaling", type=float, default=32768.,
                            help="The initial loss scaling of AMP.")
+        group.add_argument("--use_sharding", type=str2bool, default=False,
+                           help="Whether to use sharding strategy.")
+        group.add_argument("--dp_degree", type=int, default=1, help="Data parallism degree.")
+        group.add_argument("--sharding_degree", type=int, default=1, help="Sharding parallism degree.")
+        group.add_argument("--mp_degree", type=int, default=1, help="Tensor model parallism degree.")
+        group.add_argument("--pp_degree", type=int, default=1, help="Pipeline model parallism degree.")
 
         return group
 
@@ -83,6 +94,8 @@ class Model(ABC):
         # optimizer related
         self.optimizer = args.optimizer
         self.learning_rate = args.learning_rate
+        self.beta1 = args.beta1
+        self.beta2 = args.beta2
         self.warmup_steps = args.warmup_steps
         self.lr_scheduler = args.lr_scheduler
         self.max_training_steps = args.max_training_steps
@@ -93,9 +106,33 @@ class Model(ABC):
         # training related
         self.is_distributed = args.get("is_distributed", False)
         self.use_recompute = args.use_recompute
+        self.checkpointing_every_n_layers = args.checkpointing_every_n_layers
         self.use_amp = args.use_amp
         self.amp_loss_scaling = args.amp_loss_scaling
-        if not self.is_distributed:
+        self.use_sharding = args.use_sharding
+        self.dp_degree = args.dp_degree
+        self.sharding_degree = args.sharding_degree
+        self.mp_degree = args.mp_degree
+        self.pp_degree = args.pp_degree
+
+        # setup topology
+        if self.is_distributed:
+            fleet.init(is_collective=True)
+            if self.use_sharding:
+                self.topo = Topology(
+                    device_rank=fleet.worker_index(),
+                    world_size=fleet.worker_num(),
+                    dp_degree=self.dp_degree,
+                    pp_degree=self.pp_degree,
+                    sharding_degree=self.sharding_degree,
+                    mp_degree=self.mp_degree)
+            else:
+                self.topo = Topology(
+                    device_rank=fleet.worker_index(),
+                    world_size=fleet.worker_num(),
+                    dp_degree=fleet.worker_num())
+        else:
+            self.topo = Topology(device_rank=0, world_size=1)
             if self.use_recompute:
                 print("[WARN] Cannot support recomputation in non-distributed mode.")
             if self.use_amp:
@@ -127,6 +164,15 @@ class Model(ABC):
                 "custom_white_list": ["softmax", "layer_norm", "gelu"],
                 "init_loss_scaling": self.amp_loss_scaling
             }
+        if self.use_sharding:
+            dist_strategy.sharding = True
+            dist_strategy.sharding_configs = {
+                "segment_broadcast_MB": 32,
+                "dp_degree": self.dp_degree,
+                "sharding_degree": self.sharding_degree,
+                "mp_degree": self.mp_degree,
+                "pp_degree": self.pp_degree
+            }
         self.dist_strategy = dist_strategy
         print(self.dist_strategy)
         return
@@ -138,7 +184,8 @@ class Model(ABC):
             checkpoints: A list of Variables which need to set as checkpoints.
         """
         self.dist_strategy.recompute_configs = {
-            "checkpoints": [x.name for x in checkpoints]
+            "checkpoints": [x.name for x in checkpoints[
+                self.checkpointing_every_n_layers - 1::self.checkpointing_every_n_layers]]
         }
         return
 
@@ -148,6 +195,7 @@ class Model(ABC):
         Build training program, evaluation program and inference program. Only use in static graph mode.
         """
         self.startup_program = fluid.Program()
+
         if self.run_infer:
             # build inference program
             self.infer_program = fluid.Program()
@@ -176,12 +224,16 @@ class Model(ABC):
                         self._set_checkpoints(outputs["checkpoints"])
 
                     metrics = self.get_metrics(inputs, outputs)
+                    if self.use_sharding:
+                        scheduled_lr = self.optimize(metrics)
 
                     # build evaluation program
                     self.eval_program = self.train_program.clone(for_test=True)
                     self.eval_fetch_dict = dict(**metrics)
 
-                    scheduled_lr = self.optimize(metrics)
+                    if not self.use_sharding:
+                        scheduled_lr = self.optimize(metrics)
+
                     metrics["scheduled_lr"] = scheduled_lr
                     if self.is_distributed and self.use_amp:
                         vars_ = fluid.default_main_program().global_block().vars
@@ -399,7 +451,9 @@ class Model(ABC):
         optimizer = optimizer_cls(
             learning_rate=scheduled_lr,
             grad_clip=grad_clip,
-            weight_decay=self.weight_decay)
+            weight_decay=self.weight_decay,
+            beta1=self.beta1,
+            beta2=self.beta2)
 
         # distributed optimizer
         if self.is_distributed:

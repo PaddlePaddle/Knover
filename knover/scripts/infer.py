@@ -35,7 +35,6 @@ def setup_args():
     parser.add_argument("--save_path", type=str, default="output")
     parser.add_argument("--infer_file", type=str, required=True)
     parser.add_argument("--output_name", type=str, required=True)
-
     parser.add_argument("--log_steps", type=int, default=1)
 
     models.add_cmdline_args(parser)
@@ -62,14 +61,22 @@ def infer(args):
 
     task = tasks.create_task(args)
     model = models.create_model(args, place)
+
+    # setup dataset
     infer_generator = task.get_data_loader(
         model,
         input_file=args.infer_file,
-        num_part=dev_count,
-        part_id=gpu_id,
+        num_part=model.topo.data_info.size,
+        part_id=model.topo.data_info.rank,
         phase=phase,
         is_infer=True
     )
+    if model.topo.pp_info.size != 1:
+        raise ValueError("Cannot support pipeline in inference now!")
+    if model.topo.sharding_info.size != 1:
+        raise ValueError("Cannot support sharding in inference now!")
+    if model.topo.world.size > dev_count:
+        raise ValueError("Cannot support evaluation on multiple nodes now!")
 
     # run inference
     timer = Timer()

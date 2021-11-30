@@ -43,6 +43,7 @@ fleetrun \
     --weight_decay ${weight_decay:-0.0} \
     --use_amp ${use_amp:-"true"} \
     --use_recompute ${use_recompute:-"false"} \
+    --use_sharding ${use_sharding:-"false"} \
     --num_epochs ${num_epochs} \
     --log_steps ${log_steps} \
     --validation_steps ${validation_steps} \
@@ -50,5 +51,9 @@ fleetrun \
     --save_path ${save_path} \
     --random_seed ${random_seed:-11}
 exit_code=$?
+
+if [[ $exit_code != 0 ]]; then
+    rm ${save_path}/*.finish
+fi
 
 exit $exit_code

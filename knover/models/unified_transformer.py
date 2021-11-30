@@ -301,7 +301,8 @@ class UnifiedTransformer(Model):
             name=name,
             caches=caches,
             gather_idx=gather_idx,
-            store=caches is not None
+            store=caches is not None,
+            topo=self.topo
         )
 
     def _calc_logits(self, enc_out, tgt_idx=None, name=""):

@@ -124,6 +124,7 @@ class Model(ABC):
         if self.use_amp:
             dist_strategy.amp = True
             dist_strategy.amp_configs = {
+                "custom_white_list": ["softmax", "layer_norm", "gelu"],
                 "init_loss_scaling": self.amp_loss_scaling
             }
         self.dist_strategy = dist_strategy

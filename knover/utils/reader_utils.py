@@ -18,6 +18,14 @@ import copy
 import numpy as np
 
 
+def rindex(lst, elem):
+    """Get the last position of elem in lst."""
+    try:
+        return len(lst) - lst[::-1].index(elem) - 1
+    except:
+        return 0
+
+
 def mask(batch_tokens,
          vocab_size,
          bos_id=1,

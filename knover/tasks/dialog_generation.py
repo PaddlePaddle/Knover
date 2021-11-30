@@ -400,7 +400,11 @@ def get_nsp_score_batch(nsp_predictor, predictions):
                 tgt=response_tokenized_input,
                 data_id=i
             )
-            record = reader._convert_example_to_record(example, is_infer=True)
+            try:
+                record = reader._convert_example_to_record(example, is_infer=True)
+            except ValueError as e:
+                print(f"[FATAL] {e}")
+                raise e
             yield record
         return
 

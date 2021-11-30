@@ -276,6 +276,8 @@ class DialogReader(object):
     def _convert_example_to_record(self, example, is_infer):
         """Convert an example to a record which can be used as the model's input."""
         field_values = self._parse_src(example.src)
+        if len(field_values["token_ids"]) == 1:
+            raise ValueError(f"Invalid example: context too long / no context - {example}")
 
         if self.max_knowledge_len > 0:
             # add knowledge
@@ -327,8 +329,14 @@ class DialogReader(object):
             example = Example(*line, data_id=i)
             if self.reserve_example and (is_infer or phase.endswith("test")):
                 self.features[i] = example
-            record = self._convert_example_to_record(example, is_infer)
-            yield record
+            try:
+                record = self._convert_example_to_record(example, is_infer)
+                yield record
+            except ValueError as e:
+                if "Invalid example" in str(e):
+                    print(f"[WARN] {e}")
+                else:
+                    raise e
 
     def _read_numerical_file(self, fp, phase, is_infer, delimiter=";"):
         """Read a file which contains numerical data and yield records."""
@@ -554,12 +562,17 @@ class DialogReader(object):
             elif phase.startswith("distributed"):
                 batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id, is_test=True)
 
-            for epoch_index in range(num_epochs):
-                if phase == "train":
-                    self.current_example = 0
-                    self.current_epoch = epoch_index + 1
-                for batch in batch_reader():
-                    yield self._pad_batch_records(batch, is_infer, phase=phase)
+            try:
+                for epoch_index in range(num_epochs):
+                    if phase == "train":
+                        self.current_example = 0
+                        self.current_epoch = epoch_index + 1
+                    for batch in batch_reader():
+                        yield self._pad_batch_records(batch, is_infer, phase=phase)
+            except:
+                import traceback
+                traceback.print_exc()
+                raise
 
         return __wrapper__
 

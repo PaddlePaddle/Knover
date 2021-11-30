@@ -65,7 +65,11 @@ def interact(args):
             context.append(user_utt)
             example = Example(src=" [SEP] ".join(context), data_id=0)
             task.reader.features[0] = example
-            record = task.reader._convert_example_to_record(example, is_infer=True)
+            try:
+                record = task.reader._convert_example_to_record(example, is_infer=True)
+            except ValueError as e:
+                print(f"[FATAL] {e}")
+                raise e
             data = task.reader._pad_batch_records([record], is_infer=True)
             pred = task.infer_step(model, data)[0]
             bot_response = pred["response"]

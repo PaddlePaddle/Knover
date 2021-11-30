@@ -33,6 +33,8 @@ class ClassificationReader(DialogReader):
     def _convert_example_to_record(self, example, is_infer):
         """Convert example to record which can be used as the model's input."""
         field_values = self._parse_src(example.src)
+        if len(field_values["token_ids"]) == 1:
+            raise ValueError(f"Invalid example: context too long / no context - {example}")
 
         if self.max_knowledge_len > 0:
             knowledge_field_values = self._parse_knowledge(example.knowledge)

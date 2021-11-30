@@ -97,9 +97,9 @@ class Model(ABC):
         self.amp_loss_scaling = args.amp_loss_scaling
         if not self.is_distributed:
             if self.use_recompute:
-                print("[WARM] Cannot support recomputation in non-distributed mode.")
+                print("[WARN] Cannot support recomputation in non-distributed mode.")
             if self.use_amp:
-                print("[WARM] Cannot support AMP in non-distributed mode.")
+                print("[WARN] Cannot support AMP in non-distributed mode.")
 
         # model mode
         self.run_infer = args.get("run_infer", False)
@@ -364,7 +364,7 @@ class Model(ABC):
         # TODO: support dygraph
         # lr scheduler
         if self.lr_scheduler == "noam" and self.warmup_steps <= 0:
-            print("[WARMING] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
+            print("[WARN] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
         if self.lr_scheduler == "noam" and self.warmup_steps > 0:
             scheduled_lr = layers.learning_rate_scheduler.noam_decay(
                 1 / (self.warmup_steps * (self.learning_rate ** 2)),

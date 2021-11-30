@@ -78,6 +78,11 @@ class DialogGeneration(Task):
 
         return
 
+    def infer_step(self, model, inputs):
+        from knover.modules.ops import reset_state
+        reset_state()
+        return super().infer_step(model, inputs)
+
     def _post_process_generation_output(self, predictions):
         """Post-process generation output.
 

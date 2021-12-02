@@ -45,6 +45,9 @@ class DialogGeneration(Task):
 
         group.add_argument("--ranking_score", type=str, default="decode_score",
                            help="Which score will be used to rerank.")
+        group.add_argument("--generate_seed", type=int, default=11,
+                           help="The random seed used in inference. If you use the same seed, you will get "
+                           "the same inference result.")
 
         args, _ = parser.parse_known_args()
         if args.model == "Plato":
@@ -76,11 +79,13 @@ class DialogGeneration(Task):
         self.ranking_score = args.ranking_score
         self.max_dec_len = args.max_dec_len
 
+        self.generate_seed = args.generate_seed
+
         return
 
     def infer_step(self, model, inputs):
         from knover.modules.ops import reset_state
-        reset_state()
+        reset_state(self.generate_seed)
         return super().infer_step(model, inputs)
 
     def _post_process_generation_output(self, predictions):

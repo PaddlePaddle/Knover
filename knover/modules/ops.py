@@ -18,12 +18,16 @@ import paddle
 import paddle.static as static
 
 
-global_rng = np.random.RandomState(0)
+global_rng = None
 sampling_seed = 0
 sampling_rng = None
 
 
-def reset_state():
+def reset_state(generate_seed):
+    global global_rng
+    if global_rng is None:
+        global_rng = np.random.RandomState(generate_seed)
+
     global sampling_seed
     sampling_seed = global_rng.randint(0, 2**32 - 1)
     reset_rng(sampling_seed)

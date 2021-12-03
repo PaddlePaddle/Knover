@@ -8,11 +8,10 @@ To explore the limit of dialogue generation pre-training, we present the models 
 
 ## Requirements:
 * [Knover](../..)
+* PaddlePaddle >= 2.2.0
 
 ## Pre-trained dialogue generation model
-A novel pre-training model for dialogue generation is introduced in this work, incorporated with latent discrete variables for one-to-many relationship modeling.
-
-* PLATO-XL (11B params), EN: [Model](https://dialogue.bj.bcebos.com/Knover/PLATO-XL/11B.tar)
+* PLATO-XL (11B params), EN: [Model](https://dialogue.bj.bcebos.com/Knover/projects/PLATO-XL/11B.tar)
 
 ## Inference
 

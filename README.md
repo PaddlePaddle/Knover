@@ -3,6 +3,7 @@ Knover is a toolkit for knowledge grounded dialogue generation based on PaddlePa
 
 ### What's New:
 
+* December 2021: We are opening the dialogue generation model of [PLATO-XL](projects/PLATO-XL/README.md), with up to 11 billion parameters.
 * October 2021: We are opening [AG-DST](projects/AG-DST/README.md), an amendable generation for dialogue state tracking.
 * February 2021: We are opening our implementation (Team 19) in [DSTC9-Track1](projects/DSTC9-Track1/README.md).
 * July 2020: We are opening [PLATO-2](projects/PLATO-2/README.md), a large-scale generative model with latent space for open-domain dialogue systems.

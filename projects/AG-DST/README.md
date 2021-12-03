@@ -1,5 +1,5 @@
 # AG-DST
-[**Amendable Gneration for Dialogue State Tracking**](https://arxiv.org/abs/2110.15659)
+[**Amendable Generation for Dialogue State Tracking**](https://arxiv.org/abs/2110.15659)
 
 ![AG-DST Architecture](./images/AG-DST.png)
 

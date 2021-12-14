@@ -213,6 +213,9 @@ class ModelInterface(object):
         # amp related
         group.add_argument("--use_amp", type=str2bool, default=False,
                            help="Whether to use automatic mixed precision(AMP) to speedup training and save memory.")
+        group.add_argument("--amp_level", type=str, default="O1",
+                           choices=["O1", "O2"],
+                           help="The level of amp training")
         group.add_argument("--amp_loss_scaling", type=float, default=32768.,
                            help="The initial loss scaling of AMP.")
         return group
@@ -290,6 +293,7 @@ class ModelInterface(object):
         """
         # amp settings
         self._use_amp = args.use_amp
+        self._amp_level = args.amp_level
 
         # optimizer
         if not hasattr(knover.optim, args.optimizer):
@@ -310,7 +314,7 @@ class ModelInterface(object):
             self._model, optimizer = paddle.amp.decorate(
                 models=self._model,
                 optimizers=optimizer,
-                level="O1")
+                level=self._amp_level)
 
         return optimizer
 
@@ -366,7 +370,8 @@ class ModelInterface(object):
         with paddle.amp.auto_cast(
                 self._use_amp,
                 custom_white_list=["softmax", "layer_norm", "gelu"],
-                level="O1"):
+                custom_black_list=["reduce_sum", "c_softmax_with_cross_entropy", "elementwise_div"],
+                level=self._amp_level):
             if self._is_distributed:
                 self._dp_model.train()
                 metrics = self._dp_model(inputs, mode="train")
@@ -390,6 +395,7 @@ class ModelInterface(object):
             with paddle.amp.auto_cast(
                 self._use_amp,
                 custom_white_list=["softmax", "layer_norm", "gelu"],
+                custom_black_list=["reduce_sum", "c_softmax_with_cross_entropy", "elementwise_div"],
                 level=self._amp_level):
                 if self._is_distributed:
                     self._dp_model.eval()

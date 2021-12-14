@@ -84,7 +84,7 @@ class UnifiedTransformer(Model):
                 fuse_qkv=args.get("fuse_qkv", False),
                 weight_attr=param_attr
             ))
-        self.encoder = TransformerEncoder(layers, norm=output_norm)
+        self.encoder = TransformerEncoder(layers, norm=output_norm, use_recompute=args.use_recompute)
 
         # lm head
         self.lm_trans_fc = nn.Linear(args.hidden_size, args.hidden_size, weight_attr=param_attr)

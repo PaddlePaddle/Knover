@@ -17,12 +17,14 @@ import argparse
 from collections import defaultdict
 import json
 import os
+import random
 import subprocess
 import time
 
 import numpy as np
+import paddle
+import paddle.distributed.fleet as fleet
 import paddle.fluid as fluid
-from paddle.distributed import fleet
 
 import knover.models as models
 import knover.tasks as tasks
@@ -76,8 +78,15 @@ def run_cmd(cmd):
     return output
 
 
+def set_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    paddle.seed(seed)
+
+
 def train(args):
     """The main function of training."""
+    set_seeds(args.random_seed)
     if args.is_distributed:
         fleet.init(is_collective=True)
 

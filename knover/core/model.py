@@ -20,6 +20,7 @@ import paddle
 from paddle.distributed import fleet
 import paddle.nn as nn
 import paddle.optimizer.lr as lr
+from paddle.distributed.fleet.utils.hybrid_parallel_util import fused_allreduce_gradients
 
 import knover.optim
 from knover.optim.lr_scheduler import CosineDecay
@@ -218,12 +219,16 @@ class ModelInterface(object):
                            help="The level of amp training")
         group.add_argument("--amp_loss_scaling", type=float, default=32768.,
                            help="The initial loss scaling of AMP.")
+        # recompute related
+        group.add_argument("--use_recompute", type=str2bool, default=False,
+                           help="Whether to use recompute to save memory usage.")
         return group
 
     def __init__(self, args, model, place):
         assert isinstance(model, Model), "The model must be an instance of Model"
         self._model = model
         self._is_distributed = args.is_distributed and fleet.worker_num() > 1
+        self._use_recompute = args.use_recompute
 
         self._place = place
 
@@ -374,11 +379,19 @@ class ModelInterface(object):
                 level=self._amp_level):
             if self._is_distributed:
                 self._dp_model.train()
-                metrics = self._dp_model(inputs, mode="train")
+                if self._use_recompute:
+                    with self._dp_model.no_sync():
+                        metrics = self._dp_model(inputs, mode="train")
+                        self.backward(metrics["loss"])
+                else:
+                    metrics = self._dp_model(inputs, mode="train")
+                    self.backward(metrics["loss"])
             else:
                 self._model.train()
                 metrics = self._model(inputs, mode="train")
-            self.backward(metrics["loss"])
+                self.backward(metrics["loss"])
+        if self._is_distributed and self._use_recompute:
+            fused_allreduce_gradients(list(self._dp_model.parameters()), None)
         self.optimize(metrics)
         return self._get_outputs(metrics)
 

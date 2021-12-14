@@ -346,18 +346,18 @@ class TransformerEncoder(nn.Layer):
         output = src
         if caches is not None:
             new_caches = []
-        if self.use_recompute:
+        if self.use_recompute and self.training:
             self.checkpoints = []
 
         for i, mod in enumerate(self.layers):
             if caches is not None:
                 output, new_cache = mod(output, src_mask, caches[i])
                 new_caches.append(new_cache)
-            elif self.use_recompute:
+            elif self.use_recompute and self.training:
                 output = recompute(mod, output, src_mask)
             else:
                 output = mod(output, src_mask)
-            if self.use_recompute:
+            if self.use_recompute and self.training:
                 self.checkpoints.append(output.name)
 
         if self.norm is not None:

@@ -20,7 +20,7 @@ import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.incubate.fleet.collective import fleet
 
-from knover.utils import mask, open_file, pad_batch_data, str2bool
+from knover.utils import mask, open_file, pad_batch_data, str2bool, to_optimized_size
 import knover.utils.tokenization as tokenization
 
 
@@ -129,7 +129,7 @@ class DialogReader(object):
             self.fields.append("role_ids")
         self.num_numerical_fields = len(self.fields)
         self.fields += ["tgt_start_idx", "data_id"]
-        self.sort_key = lambda record: [len(record.token_ids)]
+        self.sort_key = lambda record: [to_optimized_size(len(record.token_ids))]
 
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
 
@@ -581,7 +581,7 @@ class DialogReader(object):
             num_aux_token: The number of auxiliary tokens. The auxiliary tokens will concatenate to the begin of
                 sequence. They are considered as a part of source sequence.
         """
-        max_len = max(map(len, batch_token_ids))
+        max_len = to_optimized_size(max(map(len, batch_token_ids)))
         input_mask_data = np.zeros((len(batch_token_ids), max_len + num_aux_token, max_len + num_aux_token))
         if is_unidirectional:
             for index, mask_data in enumerate(input_mask_data):

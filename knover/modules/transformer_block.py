@@ -1,4 +1,4 @@
-#   Copyright (c) 2020 PaddlePaddle Authors. All Rights Reserved.
+#   Copyright (c) 2021 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,380 +13,369 @@
 # limitations under the License.
 """Transformer block."""
 
-from functools import partial
+import collections
 
-import paddle.fluid as fluid
-import paddle.fluid.layers as layers
+import paddle
+from paddle.distributed import fleet
+from paddle.distributed.fleet.utils import recompute
+from paddle.fluid import layers
+import paddle.incubate as incubate
+import paddle.nn as nn
+import paddle.nn.functional as F
+import paddle.tensor as tensor
+from paddle.nn.layer.transformer import _convert_param_attr_to_list, _convert_attention_mask
 
 
-def multi_head_attention(queries,
-                         keys,
-                         values,
-                         attn_bias,
-                         d_key,
-                         d_value,
-                         d_model,
-                         n_head=1,
-                         dropout_rate=0.,
-                         cache=None,
-                         gather_idx=None,
-                         store=False,
-                         param_initializer=None,
-                         name="multi_head_att"):
+class MultiHeadAttention(nn.Layer):
     """Multi-Head Attention.
 
-    Note that attn_bias is added to the logit before computing softmax activiation to
-    mask certain selected positions so that they will not be considered in attention weights.
+    Attention mapps queries and a set of key-value pairs to outputs, and
+    Multi-Head Attention performs multiple parallel attention to jointly attending
+    to information from different representation subspaces.
     """
-    keys = queries if keys is None else keys
-    values = keys if values is None else values
 
-    if not (len(queries.shape) == len(keys.shape) == len(values.shape) == 3):
-        raise ValueError("Inputs: quries, keys and values should all be 3-D tensors.")
+    Cache = collections.namedtuple("Cache", ["k", "v"])
+    StaticCache = collections.namedtuple("StaticCache", ["k", "v"])
 
-    def __compute_qkv(queries, keys, values, n_head, d_key, d_value):
-        """Add linear projection to queries, keys, and values."""
-        q = layers.fc(input=queries,
-                      size=d_key * n_head,
-                      num_flatten_dims=2,
-                      param_attr=fluid.ParamAttr(
-                          name=name + "_query_fc.w_0",
-                          initializer=param_initializer),
-                      bias_attr=name + "_query_fc.b_0")
-        k = layers.fc(input=keys,
-                      size=d_key * n_head,
-                      num_flatten_dims=2,
-                      param_attr=fluid.ParamAttr(
-                          name=name + "_key_fc.w_0",
-                          initializer=param_initializer),
-                      bias_attr=name + "_key_fc.b_0")
-        v = layers.fc(input=values,
-                      size=d_value * n_head,
-                      num_flatten_dims=2,
-                      param_attr=fluid.ParamAttr(
-                          name=name + "_value_fc.w_0",
-                          initializer=param_initializer),
-                      bias_attr=name + "_value_fc.b_0")
+    def __init__(self,
+                 embed_dim,
+                 num_heads,
+                 dropout=0.,
+                 kdim=None,
+                 vdim=None,
+                 need_weights=False,
+                 weight_attr=None,
+                 bias_attr=None,
+                 fuse_qkv=False,
+                 num_partitions=1):
+        super(MultiHeadAttention, self).__init__()
+        self.embed_dim = embed_dim
+        self.kdim = kdim if kdim is not None else embed_dim
+        self.vdim = vdim if vdim is not None else embed_dim
+        self.num_heads = num_heads
+        self.dropout = nn.Dropout(dropout, mode="upscale_in_train")
+        self.need_weights = need_weights
+        self.fuse_qkv = fuse_qkv
+
+        self.head_dim = embed_dim // num_heads
+        assert self.head_dim * num_heads == self.embed_dim, "embed_dim must be divisible by num_heads"
+
+        assert self.num_heads % num_partitions == 0
+        self.num_heads = self.num_heads // num_partitions
+
+        if self.fuse_qkv:
+            assert self.kdim == embed_dim, "embed_dim should be equal to kdim"
+            assert self.vdim == embed_dim, "embed_dim should be equal to vidm"
+
+            self.qkv_proj = fleet.meta_parallel.ColumnParallelLinear(
+                embed_dim,
+                3 * embed_dim,
+                weight_attr=weight_attr,
+                has_bias=True,
+                gather_output=False)
+        else:
+            self.q_proj = fleet.meta_parallel.ColumnParallelLinear(
+                embed_dim,
+                embed_dim,
+                weight_attr=weight_attr,
+                has_bias=True,
+                gather_output=False)
+
+            self.k_proj = fleet.meta_parallel.ColumnParallelLinear(
+                self.kdim,
+                embed_dim,
+                weight_attr=weight_attr,
+                has_bias=True,
+                gather_output=False)
+
+            self.v_proj = fleet.meta_parallel.ColumnParallelLinear(
+                self.vdim,
+                embed_dim,
+                weight_attr=weight_attr,
+                has_bias=True,
+                gather_output=False)
+
+        self.out_proj = fleet.meta_parallel.RowParallelLinear(
+            embed_dim,
+            embed_dim,
+            weight_attr=weight_attr,
+            has_bias=True,
+            input_is_parallel=True)
+
+    def _fuse_prepare_qkv(self, x):
+        """Prapares linear projected queries, keys and values in fused style."""
+        mix_layer = self.qkv_proj(x)
+        mix_layer = paddle.reshape_(mix_layer, [0, 0, self.num_heads, 3 * self.head_dim])
+        mix_layer = paddle.transpose(mix_layer, [0, 2, 1, 3])
+        q, k, v = paddle.split(mix_layer, num_or_sections=3, axis=-1)
         return q, k, v
 
-    def __split_heads(x, n_head):
-        """Split input embeddings into multiply chunks.
+    def _prepare_qkv(self, query, key, value, cache=None):
+        """Prapares linear projected queries, keys and values."""
+        q = self.q_proj(query)
+        q = tensor.reshape(q, shape=[0, 0, self.num_heads, self.head_dim])
+        q = tensor.transpose(q, perm=[0, 2, 1, 3])
 
-        Reshape the last dimension of inpunt tensor x so that it becomes two
-        dimensions and then transpose. Specifically, input a tensor with shape
-        [batch_size, max_seq_len, hidden_size] then output a tensor
-        with shape [batch_size, num_heads, max_seq_len, hidden_size // num_heads].
-        """
-        hidden_size = x.shape[-1]
-        # The value 0 in shape attr means copying the corresponding dimension
-        # size of the input as the output dimension size.
-        reshaped = layers.reshape(
-            x=x, shape=[0, 0, n_head, hidden_size // n_head], inplace=True)
-
-        # permuate the dimensions into:
-        # [batch_size, n_head, max_sequence_len, hidden_size_per_head]
-        return layers.transpose(x=reshaped, perm=[0, 2, 1, 3])
-
-    def __combine_heads(x):
-        """Merge multiply chunks into output embeddings.
-
-        Transpose and then reshape the last two dimensions of input tensor x
-        into one dimension, which is reverse to __split_heads.
-        """
-        if len(x.shape) == 3: return x
-        if len(x.shape) != 4:
-            raise ValueError("Input(x) should be a 4-D Tensor.")
-
-        trans_x = layers.transpose(x, perm=[0, 2, 1, 3])
-        # The value 0 in shape attr means copying the corresponding dimension
-        # size of the input as the output dimension size.
-        return layers.reshape(
-            x=trans_x,
-            shape=[0, 0, trans_x.shape[2] * trans_x.shape[3]],
-            inplace=True)
-
-    def __scaled_dot_product_attention(q, k, v, attn_bias, d_key, dropout_rate):
-        """Scaled Dot-Product Attention"""
-        scaled_q = layers.scale(x=q, scale=d_key ** -0.5)
-        product = layers.matmul(x=scaled_q, y=k, transpose_y=True)
-        if attn_bias:
-            product += attn_bias
-        weights = layers.softmax(product, use_cudnn=True)
-        if dropout_rate:
-            weights = layers.dropout(
-                weights,
-                dropout_prob=dropout_rate,
-                dropout_implementation="upscale_in_train",
-                is_test=False)
-        out = layers.matmul(weights, v)
-        return out
-
-    q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
-
-    if cache is not None:  # use cache and concat time steps
-        # Since the inplace reshape in __split_heads changes the shape of k and
-        # v, which is the cache input for next time step, reshape the cache
-        # input from the previous time step first.
-        cache_k, cache_v = cache["k"], cache["v"]
-        select_k = layers.gather(cache_k, index=gather_idx)
-        select_v = layers.gather(cache_v, index=gather_idx)
-
-        select_k = layers.reshape(select_k, shape=[0, 0, d_key * n_head])
-        select_v = layers.reshape(select_v, shape=[0, 0, d_value * n_head])
-        if store:
-            k = layers.concat([select_k, k], axis=1) 
-            v = layers.concat([select_v, v], axis=1)
-            layers.assign(k, cache["k"])
-            layers.assign(v, cache["v"])
+        if isinstance(cache, self.StaticCache):
+            # for encoder-decoder attention in inference and has cached
+            k, v = cache.k, cache.v
         else:
-            tmp_k = layers.concat([select_k, k[:, :1]], axis=1)
-            tmp_v = layers.concat([select_v, v[:, :1]], axis=1)
-            layers.assign(tmp_k, cache["k"])
-            layers.assign(tmp_v, cache["v"])
-            k = layers.concat([select_k, k], axis=1)
-            v = layers.concat([select_v, v], axis=1)
+            k, v = self.compute_kv(key, value)
 
-    q = __split_heads(q, n_head)
-    k = __split_heads(k, n_head)
-    v = __split_heads(v, n_head)
+        if isinstance(cache, self.Cache):
+            # for decoder self-attention in inference
+            k = tensor.concat([cache.k, k], axis=2)
+            v = tensor.concat([cache.v, v], axis=2)
 
-    ctx_multiheads = __scaled_dot_product_attention(q, k, v, attn_bias, d_key,
-                                                  dropout_rate)
+        if cache is not None:
+            return q, k, v, self.Cache(k, v)
+        else:
+            return q, k, v
 
-    out = __combine_heads(ctx_multiheads)
+    def compute_kv(self, key, value):
+        """Prapares linear projected  keys and values.
 
-    # Project back to the model size.
-    proj_out = layers.fc(input=out,
-                         size=d_model,
-                         num_flatten_dims=2,
-                         param_attr=fluid.ParamAttr(
-                             name=name + "_output_fc.w_0",
-                             initializer=param_initializer),
-                         bias_attr=name + "_output_fc.b_0")
-    return proj_out
+        Applies linear projection on input keys and values, then splits heads
+        (reshape and transpose) to get keys and values from different representation
+        subspaces. The results are used as key-values pairs for subsequent multiple
+        parallel attention.
+
+        It is part of calculations in multi-head attention, and is provided as
+        a method to pre-compute and prefetch these results, thus we can use them
+        to construct cache for inference.
+
+        """
+        k = self.k_proj(key)
+        v = self.v_proj(value)
+        k = tensor.reshape(k, shape=[0, 0, self.num_heads, self.head_dim])
+        k = tensor.transpose(k, perm=[0, 2, 1, 3])
+        v = tensor.reshape(v, shape=[0, 0, self.num_heads, self.head_dim])
+        v = tensor.transpose(v, perm=[0, 2, 1, 3])
+        return k, v
+
+    def gen_cache(self, key, value=None, type=Cache):
+        """Generates cache for faster decoding step by step.
+
+        The generated cache is an instance of `MultiHeadAttention.Cache` or an
+        instance of `MultiHeadAttention.StaticCache`.
+        """
+        if type == MultiHeadAttention.StaticCache:  # static_kv
+            k, v = self.compute_kv(key, value)
+            return self.StaticCache(k, v)
+        elif value is None:  # incremental_state
+            k = layers.fill_constant_batch_size_like(
+                input=key,
+                shape=[-1, self.num_heads, 0, self.head_dim],
+                dtype=key.dtype,
+                value=0)
+            v = layers.fill_constant_batch_size_like(
+                input=key,
+                shape=[-1, self.num_heads, 0, self.head_dim],
+                dtype=key.dtype,
+                value=0)
+            return self.Cache(k, v)
+        else:
+            # incremental_state with initial value, mainly for usage like UniLM
+            return self.Cache(key, value)
+
+    def forward(self,
+                query,
+                key,
+                value,
+                attn_bias=None,
+                cache=None):
+        key = query if key is None else key
+        value = query if value is None else value
+        # compute q ,k ,v
+        if cache is not None:
+            q, k, v, cache = self._prepare_qkv(query, key, value, cache)
+        elif self.fuse_qkv:
+            q, k, v = self._fuse_prepare_qkv(query)
+        else:
+            q, k, v = self._prepare_qkv(query, key, value)
+        # scale dot product attention
+        product = layers.matmul(
+            x=q, y=k, transpose_y=True, alpha=self.head_dim**-0.5)
+
+        if isinstance(attn_bias, str) and attn_bias == "upper_triangle":
+            weights = incubate.softmax_mask_fuse_upper_triangle(product)
+        elif attn_bias is not None:
+            weights = F.softmax(product + attn_bias)
+        else:
+            weights = F.softmax(product)
+
+        weights = self.dropout(weights)
+
+        out = tensor.matmul(weights, v)
+
+        # combine heads
+        out = tensor.transpose(out, perm=[0, 2, 1, 3])
+        out = tensor.reshape(x=out, shape=[0, 0, out.shape[2] * out.shape[3]])
+
+        # project to output
+        out = self.out_proj(out)
+
+        outs = [out]
+        if self.need_weights:
+            outs.append(weights)
+        if cache is not None:
+            outs.append(cache)
+        return out if len(outs) == 1 else tuple(outs)
 
 
-def positionwise_feed_forward(x,
-                              d_inner_hid,
-                              d_hid,
-                              dropout_rate,
-                              hidden_act,
-                              param_initializer=None,
-                              name="ffn"):
-    """Position-wise Feed-Forward Networks.
+class TransformerEncoderLayer(nn.Layer):
+    """Transformer encoder layer.
 
-    This module consists of two linear transformations with a ReLU activation
-    in between, which is applied to each position separately and identically.
+    It contains Multi-head Attention and Position-wise Feed-forward Network.
     """
-    hidden = layers.fc(input=x,
-                       size=d_inner_hid,
-                       num_flatten_dims=2,
-                       act=hidden_act,
-                       param_attr=fluid.ParamAttr(
-                           name=name + "_fc_0.w_0",
-                           initializer=param_initializer),
-                       bias_attr=name + "_fc_0.b_0")
-    if dropout_rate:
-        hidden = layers.dropout(
-            hidden,
-            dropout_prob=dropout_rate,
-            dropout_implementation="upscale_in_train",
-            is_test=False)
-    out = layers.fc(input=hidden,
-                    size=d_hid,
-                    num_flatten_dims=2,
-                    param_attr=fluid.ParamAttr(
-                        name=name + "_fc_1.w_0", initializer=param_initializer),
-                    bias_attr=name + "_fc_1.b_0")
-    return out
 
+    def __init__(self,
+                 d_model,
+                 nhead,
+                 dim_feedforward,
+                 dropout=0.1,
+                 activation="gelu",
+                 attn_dropout=None,
+                 act_dropout=None,
+                 normalize_before=True,
+                 fuse_qkv=False,
+                 weight_attr=None,
+                 bias_attr=None,
+                 num_partitions=1):
+        super(TransformerEncoderLayer, self).__init__()
+        attn_dropout = dropout if attn_dropout is None else attn_dropout
+        act_dropout = dropout if act_dropout is None else act_dropout
+        self.normalize_before = normalize_before
 
-def pre_post_process_layer(prev_out, out, process_cmd, dropout_rate=0., epsilon=1e-5, name=""):
-    """Add a pre-process or post-process between sub layers.
+        weight_attrs = _convert_param_attr_to_list(weight_attr, 3)
+        bias_attrs = _convert_param_attr_to_list(bias_attr, 3)
 
-    Add residual connection, layer normalization and droput to the out tensor
-    optionally according to the value of process_cmd.
-    This will be used before or after multi-head attention and position-wise
-    feed-forward networks.
-    """
-    for cmd in process_cmd:
-        if cmd == "a":  # add residual connection
-            out = out + prev_out if prev_out else out
-        elif cmd == "n":  # add layer normalization
-            out = layers.layer_norm(
-                out,
-                begin_norm_axis=len(out.shape) - 1,
-                param_attr=fluid.ParamAttr(
-                    name=name + "_layer_norm_scale",
-                    initializer=fluid.initializer.Constant(1.)),
-                bias_attr=fluid.ParamAttr(
-                    name=name + "_layer_norm_bias",
-                    initializer=fluid.initializer.Constant(0.)),
-                epsilon=epsilon)
-        elif cmd == "d":  # add dropout
-            if dropout_rate:
-                out = layers.dropout(
-                    out,
-                    dropout_prob=dropout_rate,
-                    dropout_implementation="upscale_in_train",
-                    is_test=False)
-    return out
-
-
-pre_process_layer = partial(pre_post_process_layer, None)
-post_process_layer = pre_post_process_layer
-
-
-def encoder_layer(input,
-                  attn_bias,
-                  n_head,
-                  d_key,
-                  d_value,
-                  d_model,
-                  d_inner_hid,
-                  prepostprocess_dropout,
-                  attention_dropout,
-                  relu_dropout,
-                  hidden_act,
-                  preprocess_cmd="n",
-                  postprocess_cmd="da",
-                  param_initializer=None,
-                  name="",
-                  epsilon=1e-5,
-                  cache=None,
-                  gather_idx=None,
-                  store=False):
-    """A Transformer encoder block.
-
-    The encoder layers that can be stacked to form a deep encoder.
-    This module consists of a multi-head (self) attention followed by
-    position-wise feed-forward networks and both the two components are companied
-    with the pre_process_layer / post_process_layer to add residual connection,
-    layer normalization and dropout.
-    """
-    attn_output = multi_head_attention(
-        pre_process_layer(
-            input,
-            preprocess_cmd,
-            prepostprocess_dropout,
-            epsilon=epsilon,
-            name=name + "_pre_att"),
-        None,
-        None,
-        attn_bias,
-        d_key,
-        d_value,
-        d_model,
-        n_head,
-        attention_dropout,
-        param_initializer=param_initializer,
-        name=name + "_multi_head_att",
-        cache=cache,
-        gather_idx=gather_idx,
-        store=store)
-    attn_output = post_process_layer(
-        input,
-        attn_output,
-        postprocess_cmd,
-        prepostprocess_dropout,
-        name=name + "_post_att",
-        epsilon=epsilon)
-    ffd_output = positionwise_feed_forward(
-        pre_process_layer(
-            attn_output,
-            preprocess_cmd,
-            prepostprocess_dropout,
-            epsilon=epsilon,
-            name=name + "_pre_ffn"),
-        d_inner_hid,
-        d_model,
-        relu_dropout,
-        hidden_act,
-        param_initializer=param_initializer,
-        name=name + "_ffn")
-    ffd_output = post_process_layer(
-        attn_output,
-        ffd_output,
-        postprocess_cmd,
-        prepostprocess_dropout,
-        name=name + "_post_ffn",
-        epsilon=epsilon)
-    return ffd_output, [ffd_output]
-
-
-def encoder(enc_input,
-            attn_bias,
-            n_layer,
-            n_head,
-            d_key,
-            d_value,
+        self.self_attn = MultiHeadAttention(
             d_model,
-            d_inner_hid,
-            prepostprocess_dropout,
-            attention_dropout,
-            relu_dropout,
-            hidden_act,
-            pre_encoder_cmd="nd",
-            preprocess_cmd="n",
-            postprocess_cmd="da",
-            param_initializer=None,
-            name="encoder",
-            epsilon=1e-5,
-            n_layer_per_block=1,
-            param_share="normal",
-            caches=None,
-            gather_idx=None,
-            store=False):
-    """A Transformer Encoder.
+            nhead,
+            dropout=attn_dropout,
+            weight_attr=weight_attrs[0],
+            bias_attr=bias_attrs[0],
+            num_partitions=num_partitions,
+            fuse_qkv=fuse_qkv)
 
-    The encoder is composed of a stack of identical layers returned by calling
-    encoder_layer.
-    """
-    checkpoints = []
-    names = []
-    if param_share == "inner_share":
-        for _ in range(n_layer // n_layer_per_block):
-            for i in range(n_layer_per_block):
-                names.append(name + "_layer_" + str(i))
-    else:
-        for i in range(n_layer // n_layer_per_block):
-            for _ in range(n_layer_per_block):
-                names.append(name + "_layer_" + str(i))
-
-    enc_input = pre_process_layer(
-        enc_input,
-        pre_encoder_cmd,
-        prepostprocess_dropout,
-        name=f"pre_{name}",
-        epsilon=epsilon)
-    for i in range(n_layer):
-        enc_output, cps = encoder_layer(
-            enc_input,
-            attn_bias,
-            n_head,
-            d_key,
-            d_value,
+        self.linear1 = fleet.meta_parallel.ColumnParallelLinear(
             d_model,
-            d_inner_hid,
-            prepostprocess_dropout,
-            attention_dropout,
-            relu_dropout,
-            hidden_act,
-            preprocess_cmd,
-            postprocess_cmd,
-            param_initializer=param_initializer,
-            epsilon=epsilon,
-            name=names[i],
-            cache=caches[i] if caches is not None else None,
-            gather_idx=gather_idx,
-            store=store)
-        checkpoints.extend(cps)
-        enc_input = enc_output
-    enc_output = pre_process_layer(
-        enc_output,
-        preprocess_cmd,
-        prepostprocess_dropout,
-        name=f"post_{name}",
-        epsilon=epsilon)
+            dim_feedforward,
+            weight_attr=weight_attrs[2],
+            gather_output=False,
+            has_bias=True)
 
-    return enc_output, checkpoints
+        self.linear2 = fleet.meta_parallel.RowParallelLinear(
+            dim_feedforward,
+            d_model,
+            weight_attr=weight_attrs[2],
+            input_is_parallel=True,
+            has_bias=True)
+
+        self.norm1 = nn.LayerNorm(d_model, epsilon=1e-5)
+        self.norm2 = nn.LayerNorm(d_model, epsilon=1e-5)
+        self.dropout1 = nn.Dropout(dropout, mode="upscale_in_train")
+        self.dropout2 = nn.Dropout(act_dropout, mode="upscale_in_train")
+        self.activation = getattr(F, activation)
+
+    def forward(self,
+                src,
+                src_mask=None,
+                cache=None):
+        residual = src
+
+        if self.normalize_before:
+            src = self.norm1(src)
+
+        if cache is not None:
+            src, incremental_cache = self.self_attn(src, src, src, src_mask, cache)
+        else:
+            src = self.self_attn(src, src, src, src_mask)
+
+        src = residual + self.dropout1(src)
+
+        if not self.normalize_before:
+            src = self.norm1(src)
+
+        residual = src
+        if self.normalize_before:
+            src = self.norm2(src)
+
+        # src = self.linear2(F.gelu(self.linear1(src), approximate=True))
+        src = self.activation(self.linear1(src))
+        src = self.dropout2(src)
+        src = self.linear2(src)
+
+        src = residual + self.dropout1(src)
+
+        if not self.normalize_before:
+            src = self.norm2(src)
+
+        if cache is not None:
+            return src, incremental_cache
+        else:
+            return src
+
+    def gen_cache(self, memory):
+        """Generates cache for faster decoding step by step.
+
+        The generated cache is Cache or StaticCache produced by `MultiHeadAttention.gen_cache`.
+        See `MultiHeadAttention.gen_cache` for more details.
+        """
+        incremental_cache = self.self_attn.gen_cache(memory, type=self.self_attn.Cache)
+        return incremental_cache
+
+
+class TransformerEncoder(nn.Layer):
+    """TransformerEncoder is a stack of N encoder layers."""
+
+    def __init__(self, encoder_layers, norm=None, use_recompute=False):
+        super(TransformerEncoder, self).__init__()
+        # TODO: use LayerList (https://github.com/PaddlePaddle/Paddle/blob/bed652d6ece3791c6a68d0a61f0f1007fc044a91/python/paddle/nn/layer/transformer.py#L652)
+        self.layers = encoder_layers
+        self.norm = norm
+        self.use_recompute = use_recompute
+
+    def forward(self,
+                src,
+                src_mask=None,
+                caches=None):
+        src_mask = _convert_attention_mask(src_mask, src.dtype)
+
+        output = src
+        if caches is not None:
+            new_caches = []
+        if self.use_recompute:
+            self.checkpoints = []
+
+        for i, mod in enumerate(self.layers):
+            if caches is not None:
+                output, new_cache = mod(output, src_mask, caches[i])
+                new_caches.append(new_cache)
+            elif self.use_recompute:
+                output = recompute(mod, output, src_mask)
+            else:
+                output = mod(output, src_mask)
+            if self.use_recompute:
+                self.checkpoints.append(output.name)
+
+        if self.norm is not None:
+            output = self.norm(output)
+        if caches is not None:
+            return output, new_caches
+        else:
+            return output
+
+    def gen_cache(self, memory, do_zip=False):
+        """Generates cache for faster decoding step by step.
+
+        The generated cache is a list, and each element in it is Cache or StaticCache
+        produced by `TransformerLayer.gen_cache`. See `TransformerLayer.gen_cache`
+        for more details. If `do_zip` is True, apply `zip` on these tuples to get
+        a list with two elements.
+       """
+        cache = [layer.gen_cache(memory) for layer in self.layers]
+        if do_zip:
+            cache = list(zip(*cache))
+        return cache

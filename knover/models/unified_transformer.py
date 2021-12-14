@@ -20,6 +20,7 @@ import paddle.nn.functional as F
 
 from knover.models import register_model
 from knover.core.model import Model
+from knover.modules.transformer_block import TransformerEncoderLayer, TransformerEncoder
 from knover.modules.generator import Generator
 from knover.utils import gather, str2bool
 
@@ -47,69 +48,54 @@ class UnifiedTransformer(Model):
         initializer = paddle.nn.initializer.TruncatedNormal(std=args.initializer_range)
         param_attr = paddle.ParamAttr(initializer=initializer)
 
-        self.emb_size = args.get("emb_size", args.hidden_size)
-        self.hidden_size = args.hidden_size
-        self.dropout = args.hidden_dropout_prob
-
-        self.n_layer = args.num_hidden_layers
-        self.n_head = args.num_attention_heads
-        self.d_key = args.get("key_size", self.hidden_size // self.n_head)
-        self.d_value = args.get("value_size", self.hidden_size // self.n_head)
-        self.inner_hidden_size = args.get("inner_hidden_size", self.hidden_size * 4)
-
         # embeddings
-        self.vocab_size = args.vocab_size
-        self.type_size = args.type_vocab_size
-        self.pos_size = args.max_position_embeddings
-        self.token_embedding = nn.Embedding(self.vocab_size, self.emb_size, weight_attr=param_attr)
-        self.type_embedding = nn.Embedding(self.type_size, self.emb_size, weight_attr=param_attr)
-        self.pos_embedding = nn.Embedding(self.pos_size, self.emb_size, weight_attr=param_attr)
+        self.token_embedding = nn.Embedding(args.vocab_size, args.hidden_size, weight_attr=param_attr)
+        self.type_embedding = nn.Embedding(args.type_vocab_size, args.hidden_size, weight_attr=param_attr)
+        self.pos_embedding = nn.Embedding(args.max_position_embeddings, args.hidden_size, weight_attr=param_attr)
 
         # role embeddings
         self.use_role = args.use_role
         if self.use_role:
-            self.role_embedding = nn.Embedding(args.role_type_size, self.emb_size, weight_attr=param_attr)
+            self.role_embedding = nn.Embedding(args.role_type_size, args.hidden_size, weight_attr=param_attr)
 
-        # embeding mapping
-        if self.hidden_size != self.emb_size:
-            self.emb_mapping_in = True
-        else:
-            self.emb_mapping_in = args.get("emb_mapping_in", False)
-        if self.emb_mapping_in:
-            self.emb_mapping_fc = nn.Linear(self.emb_size, self.hidden_size, weight_attr=param_attr)
+        # embedding dropout
+        self.dropout = nn.Dropout(args.hidden_dropout_prob, mode="upscale_in_train")
 
         # transformer encoder
         self.normalize_before = args.get("normalize_before", True)
-        self.hidden_act = args.hidden_act
         if not self.normalize_before:
-            self.input_norm = nn.LayerNorm(self.hidden_size)
+            self.input_norm = nn.LayerNorm(args.hidden_size)
+            output_norm = None
         else:
             self.input_norm = None
-        encoder_layer = nn.TransformerEncoderLayer(
-            self.hidden_size,
-            self.n_head,
-            self.inner_hidden_size,
-            dropout=self.dropout,
-            activation=self.hidden_act,
-            act_dropout=0,
-            normalize_before=self.normalize_before,
-            weight_attr=param_attr)
-        if self.normalize_before:
-            output_norm = nn.LayerNorm(self.hidden_size)
-        else:
-            output_norm = None
-        self.encoder = nn.TransformerEncoder(encoder_layer, self.n_layer, output_norm)
+            output_norm = nn.LayerNorm(args.hidden_size)
+
+        layers = nn.LayerList()
+        for i in range(args.num_hidden_layers):
+            layers.append(TransformerEncoderLayer(
+                d_model=args.hidden_size,
+                nhead=args.num_attention_heads,
+                dim_feedforward=args.get("inner_hidden_size", args.hidden_size * 4),
+                dropout=args.hidden_dropout_prob,
+                activation=args.hidden_act,
+                attn_dropout=args.attention_probs_dropout_prob,
+                act_dropout=0,
+                normalize_before=self.normalize_before,
+                fuse_qkv=args.get("fuse_qkv", False),
+                weight_attr=param_attr
+            ))
+        self.encoder = TransformerEncoder(layers, norm=output_norm)
 
         # lm head
-        self.lm_trans_fc = nn.Linear(self.hidden_size, self.hidden_size, weight_attr=param_attr)
-        self.activation = getattr(F, self.hidden_act)
-        self.lm_trans_norm = nn.LayerNorm(self.hidden_size)
+        self.lm_trans_fc = nn.Linear(args.hidden_size, args.hidden_size, weight_attr=param_attr)
+        self.activation = getattr(F, args.hidden_act)
+        self.lm_trans_norm = nn.LayerNorm(args.hidden_size)
         self.weight_sharing = args.weight_sharing
         if self.weight_sharing:
             self.lm_logits_bias = paddle.create_parameter(
-                [self.vocab_size], "float32", name="lm_out_fc.b_0", is_bias=True)
+                [args.vocab_size], "float32", name="lm_out_fc.b_0", is_bias=True)
         else:
-            self.lm_out_fc = nn.Linear(self.emb_size, self.emb_size, weight_attr=param_attr)
+            self.lm_out_fc = nn.Linear(args.hidden_size, args.vocab_size, weight_attr=param_attr)
 
         # task-related
         from knover.modules.generator import GENERATOR_REGISTRY
@@ -150,15 +136,17 @@ class UnifiedTransformer(Model):
         if aux_emb is not None:
             emb_out = paddle.concat([aux_emb, emb_out], axis=1)
 
-        if self.emb_mapping_in:
-            emb_out = self.emb_mapping_fc(emb_out)
-
         if self.input_norm is not None:
             emb_out = self.input_norm(emb_out)
 
-        # generate n-head self-attention mask
-        attn_bias = paddle.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
-        attn_bias = paddle.unsqueeze(attn_bias, [1])
+        emb_out = self.dropout(emb_out)
+
+        if input_mask is not None:
+            # generate n-head self-attention mask
+            attn_bias = paddle.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False)
+            attn_bias = paddle.unsqueeze(attn_bias, [1])
+        else:
+            attn_bias = None
 
         return emb_out, attn_bias
 
@@ -203,6 +191,7 @@ class UnifiedTransformer(Model):
             state["tgt_generation_mask"],
         )
         logits = self._calc_logits(enc_out)
+        logits = logits[:, 0]
         return logits
 
     def _encode(self, emb_input, attn_bias, caches=None):

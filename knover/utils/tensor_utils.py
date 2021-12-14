@@ -19,7 +19,8 @@ import numpy as np
 import paddle
 import paddle.fluid as fluid
 import paddle.fluid.core as core
-from paddle.nn.layer.transformer import MultiHeadAttention
+
+from knover.modules.transformer_block import MultiHeadAttention
 
 
 try:
@@ -73,6 +74,8 @@ def gather(x, index):
     """Gather data by 1D index."""
     if isinstance(x, MultiHeadAttention.Cache):
         return MultiHeadAttention.Cache(gather(x.k, index), gather(x.v, index))
+    elif isinstance(x, MultiHeadAttention.StaticCache):
+        return MultiHeadAttention.StaticCache(gather(x.k, index), gather(x.v, index))
     elif isinstance(x, dict):
         return {k: gather(v, index) for k, v in x.items()}
     elif isinstance(x, list):

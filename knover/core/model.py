@@ -209,6 +209,12 @@ class ModelInterface(object):
         group.add_argument("--max_grad_norm", type=float, default=.1,
                            help="The maximum norm of gradient.")
 
+        # fleet related
+        # amp related
+        group.add_argument("--use_amp", type=str2bool, default=False,
+                           help="Whether to use automatic mixed precision(AMP) to speedup training and save memory.")
+        group.add_argument("--amp_loss_scaling", type=float, default=32768.,
+                           help="The initial loss scaling of AMP.")
         return group
 
     def __init__(self, args, model, place):
@@ -225,6 +231,8 @@ class ModelInterface(object):
         if args.is_distributed:
             # distributed settings for dygraph.
             # now only support data parallel for dygraph.
+            if self._use_amp:
+                self._scaler = fleet.distributed_scaler(self._scaler)
             self._dp_model = fleet.distributed_model(self._model)
             self._optimizer = fleet.distributed_optimizer(self._optimizer)
 
@@ -280,6 +288,9 @@ class ModelInterface(object):
         Returns:
             optimizer: the optimizer used in model training.
         """
+        # amp settings
+        self._use_amp = args.use_amp
+
         # optimizer
         if not hasattr(knover.optim, args.optimizer):
             raise ValueError(f"Unspported optimizer class: {args.optimizer}.")
@@ -293,6 +304,14 @@ class ModelInterface(object):
             parameters=self._model.parameters(),
             weight_decay=args.weight_decay,
             grad_clip=grad_clip)
+
+        if self._use_amp:
+            self._scaler = paddle.amp.GradScaler(init_loss_scaling=args.amp_loss_scaling)
+            self._model, optimizer = paddle.amp.decorate(
+                models=self._model,
+                optimizers=optimizer,
+                level="O1")
+
         return optimizer
 
     def _get_outputs(self, outputs):
@@ -311,7 +330,10 @@ class ModelInterface(object):
 
     def backward(self, loss):
         # backward
-        loss.backward()
+        if self._use_amp:
+            self._scaler.scale(loss).backward()
+        else:
+            loss.backward()
 
     def optimize(self, metrics):
         """Optimize the model by loss.
@@ -319,12 +341,16 @@ class ModelInterface(object):
         Args:
             metrics: A dict mapping metric names to corresponding metrics, which must include loss.
         """
-        if isinstance(self._lr_scheduler, lr.LRScheduler):
+        if isinstance(self._lr_scheduler, paddle.optimizer.lr.LRScheduler):
             self._lr_scheduler.step()
             metrics["scheduled_lr"] = self._optimizer.get_lr()
         else:
             metrics["scheduled_lr"] = self._lr_scheduler
-        self._optimizer.step()
+        if self._use_amp:
+            self._scaler.minimize(self._optimizer, metrics["loss"])
+            metrics["loss_scaling"] = self._scaler._scale
+        else:
+            self._optimizer.step()
         self._optimizer.clear_grad()
         return
 
@@ -337,13 +363,17 @@ class ModelInterface(object):
         Returns:
             metrics: A dict mapping keys to corresponding metrics.
         """
-        if self._is_distributed:
-            self._dp_model.train()
-            metrics = self._dp_model(inputs, mode="train")
-        else:
-            self._model.train()
-            metrics = self._model(inputs, mode="train")
-        self.backward(metrics["loss"])
+        with paddle.amp.auto_cast(
+                self._use_amp,
+                custom_white_list=["softmax", "layer_norm", "gelu"],
+                level="O1"):
+            if self._is_distributed:
+                self._dp_model.train()
+                metrics = self._dp_model(inputs, mode="train")
+            else:
+                self._model.train()
+                metrics = self._model(inputs, mode="train")
+            self.backward(metrics["loss"])
         self.optimize(metrics)
         return self._get_outputs(metrics)
 
@@ -357,12 +387,16 @@ class ModelInterface(object):
             metrics: A dict mapping keys to corresponding metrics (numpy arrays).
         """
         with paddle.no_grad():
-            if self._is_distributed:
-                self._dp_model.eval()
-                metrics = self._dp_model(inputs, mode="eval")
-            else:
-                self._model.eval()
-                metrics = self._model(inputs, mode="eval")
+            with paddle.amp.auto_cast(
+                self._use_amp,
+                custom_white_list=["softmax", "layer_norm", "gelu"],
+                level=self._amp_level):
+                if self._is_distributed:
+                    self._dp_model.eval()
+                    metrics = self._dp_model(inputs, mode="eval")
+                else:
+                    self._model.eval()
+                    metrics = self._model(inputs, mode="eval")
         return self._get_outputs(metrics)
 
     def infer_step(self, inputs):

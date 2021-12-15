@@ -20,7 +20,7 @@ import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.incubate.fleet.collective import fleet
 
-from knover.utils import mask, open_file, pad_batch_data, str2bool, to_optimized_size
+from knover.utils import mask, open_file, pad_batch_data, rindex, str2bool, to_optimized_size
 import knover.utils.tokenization as tokenization
 
 
@@ -129,13 +129,20 @@ class DialogReader(object):
             self.fields.append("role_ids")
         self.num_numerical_fields = len(self.fields)
         self.fields += ["tgt_start_idx", "data_id"]
-        self.sort_key = lambda record: [to_optimized_size(len(record.token_ids))]
 
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
 
         if self.reserve_example:
             self.features = {}
         return
+
+    def sort_key(self, record):
+        """The key of record.
+
+        We will apply sorting before batching. It can decrease the number of padding and
+        speedup training.
+        """
+        return [to_optimized_size(len(record.token_ids))]
 
     def get_train_progress(self):
         """Gets progress for training phase."""
@@ -300,7 +307,7 @@ class DialogReader(object):
                 for i in range(ctx_len)
             ]
 
-        if not is_infer:
+        if not is_infer and hasattr(example, "tgt"):
             tgt_field_values = self._parse_tgt(example.tgt)
             field_values = {
                 k: field_values[k] + tgt_field_values[k]
@@ -322,13 +329,15 @@ class DialogReader(object):
         headers.append("data_id")
         Example = namedtuple("Example", headers)
 
-        for i, line in enumerate(fp):
-            line = line.rstrip("\n").split(delimiter)
-            example = Example(*line, data_id=i)
-            if self.reserve_example and (is_infer or phase.endswith("test")):
-                self.features[i] = example
-            record = self._convert_example_to_record(example, is_infer)
-            yield record
+        def __wrapper__():
+            for i, line in enumerate(fp):
+                line = line.rstrip("\n").split(delimiter)
+                example = Example(*line, data_id=self.data_id)
+                self.data_id += 1
+                if self.reserve_example and (is_infer or phase.endswith("test")):
+                    self.features[i] = example
+                yield example
+        return __wrapper__
 
     def _read_numerical_file(self, fp, phase, is_infer, delimiter=";"):
         """Read a file which contains numerical data and yield records."""
@@ -343,13 +352,9 @@ class DialogReader(object):
                 # get the start position of target sequence
                 # if you change the numerical data format, you must to make sure the last part of
                 # numerical sequence is the target sequence
-                def rindex(lst, elem):
-                    try:
-                        return len(lst) - lst[::-1].index(elem) - 1
-                    except:
-                        return 0
                 tgt_start_idx = rindex(cols[0], self.bos_id)
-            record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=i)
+            record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=self.data_id)
+            self.data_id += 1
             yield record
 
     def _read_file(self, input_file, phase, is_infer):
@@ -357,11 +362,17 @@ class DialogReader(object):
         def __wrapper__():
             with open_file(input_file) as fp:
                 if self.data_format == "numerical":
-                    records = self._read_numerical_file(fp, phase, is_infer)
+                    yield from self._read_numerical_file(fp, phase, is_infer)
                 else:
-                    records = self._read_tsv(fp, phase, is_infer)
-                for record in records:
-                    yield record
+                    gen_examples = self._read_tsv(fp, phase, is_infer)
+                    for example in gen_examples():
+                        try:
+                            yield self._convert_example_to_record(example, is_infer)
+                        except ValueError as e:
+                            if "Invalid example" in str(e):
+                                print(f"[WARN] {e}")
+                            else:
+                                raise e
 
         return __wrapper__
 
@@ -536,6 +547,7 @@ class DialogReader(object):
         def __wrapper__():
             nonlocal reader
             if reader is None:
+                self.data_id = 0
                 if self.file_format == "filelist":
                     reader = self._read_files(input_file, phase, is_infer, not phase.endswith("test"))
                 else:

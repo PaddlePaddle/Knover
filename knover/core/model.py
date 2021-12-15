@@ -16,13 +16,15 @@
 from abc import abstractmethod, ABC
 import os
 
+import paddle
 from paddle.distributed import init_parallel_env
 import paddle.distributed.fleet as fleet
 import paddle.fluid as fluid
 import paddle.fluid.layers as layers
+import paddle.optimizer.lr as lr
 
 import knover.optim
-import knover.optim.lr_scheduler as lr_scheduler
+from knover.optim.lr_scheduler import CosineDecay
 from knover.utils import to_lodtensor, get_tensor, str2bool
 from knover.utils.topo import Topology
 
@@ -56,7 +58,7 @@ class Model(ABC):
         group.add_argument("--lr_scheduler", type=str, default="noam",
                            choices=["linear", "noam", "constant", "cosine"],
                            help="The learning rate scheduler for training.")
-        group.add_argument("--max_training_steps", type=int, default=2000,
+        group.add_argument("--max_decay_steps", type=int, default=2000,
                            help="The maximum training step used in linear or cosine decay lr_scheduler.")
         group.add_argument("--min_learning_rate", type=float, default=0,
                            help="The minimum learning rate used in linear or cosine decay lr_scheduler.")
@@ -91,19 +93,7 @@ class Model(ABC):
         self.init_checkpoint = args.init_checkpoint
         self.init_pretraining_params = args.init_pretraining_params
 
-        # optimizer related
-        self.optimizer = args.optimizer
-        self.learning_rate = args.learning_rate
-        self.beta1 = args.beta1
-        self.beta2 = args.beta2
-        self.warmup_steps = args.warmup_steps
-        self.lr_scheduler = args.lr_scheduler
-        self.max_training_steps = args.max_training_steps
-        self.min_learning_rate = args.min_learning_rate
-        self.weight_decay = args.weight_decay
-        self.max_grad_norm = args.max_grad_norm
-
-        # training related
+        # fleet related
         self.is_distributed = args.get("is_distributed", False)
         self.use_recompute = args.use_recompute
         self.checkpointing_every_n_layers = args.checkpointing_every_n_layers
@@ -142,6 +132,9 @@ class Model(ABC):
         # model mode
         self.run_infer = args.get("run_infer", False)
         self.batch_size = args.get("batch_size", 1)
+
+        self._lr_scheduler = self._get_lr_scheduler(args)
+        self._optimizer = self._get_optimizer(args, self._lr_scheduler)
 
         self._build_programs()
         return
@@ -231,16 +224,16 @@ class Model(ABC):
                         self._set_checkpoints(outputs["checkpoints"])
 
                     metrics = self.get_metrics(inputs, outputs)
-                    scheduled_lr = self.optimize(metrics)
+                    self.optimize(metrics)
 
                     # build evaluation program
                     self.eval_program = self.train_program.clone(for_test=True)
                     self.eval_fetch_dict = dict(**metrics)
 
-                    metrics["scheduled_lr"] = scheduled_lr
+                    global_vars = fluid.default_main_program().global_block().vars
+                    metrics["scheduled_lr"] = global_vars["learning_rate_0"]
                     if self.is_distributed and self.use_amp:
-                        vars_ = fluid.default_main_program().global_block().vars
-                        loss_scaling = vars_["loss_scaling_0"]
+                        loss_scaling = global_vars["loss_scaling_0"]
                         metrics["loss_scaling"] = loss_scaling
                     self.train_fetch_dict = metrics
 
@@ -285,6 +278,12 @@ class Model(ABC):
             start_step = get_tensor("@LR_DECAY_COUNTER@")
             if start_step is not None:
                 self.args.start_step = start_step[0]
+            if isinstance(self._lr_scheduler, lr.LRScheduler):
+                lr_scheduler_dict_path = os.path.join(model_path, "__lr_scheduler__")
+                if os.path.isfile(lr_scheduler_dict_path):
+                    lr_scheduler_dict = paddle.load(lr_scheduler_dict_path)
+                    self.args.start_step = lr_scheduler_dict["last_epoch"]
+                    self._lr_scheduler.set_state_dict(lr_scheduler_dict)
         else:
             print(f"Load pretraining parameters from {model_path}")
         return
@@ -298,6 +297,9 @@ class Model(ABC):
         """
         # TODO: support dygraph.
         if is_checkpoint:
+            if isinstance(self._lr_scheduler, lr.LRScheduler):
+                lr_scheduler_dict_path = os.path.join(model_path, "__lr_scheduler__")
+                paddle.save(self._lr_scheduler.state_dict(), lr_scheduler_dict_path)
             fluid.io.save_persistables(self.exe, model_path, self.program)
         else:
             fluid.io.save_params(self.exe, model_path, self.program)
@@ -414,60 +416,81 @@ class Model(ABC):
         """
         pass
 
+    def _get_lr_scheduler(self, args):
+        assert args.warmup_steps >= 0
+
+        if args.lr_scheduler == "noam" and args.warmup_steps == 0:
+            print("[WARN] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
+            args.lr_scheduler = "constant"
+
+        if args.lr_scheduler == "noam" and args.warmup_steps > 0:
+            scheduler = lr.NoamDecay(
+                1 / (args.warmup_steps * (args.learning_rate ** 2)),
+                args.warmup_steps)
+        elif args.lr_scheduler == "linear":
+            assert args.max_decay_steps >= args.warmup_steps
+            scheduler = lr.PolynomialDecay(
+                args.learning_rate,
+                decay_steps=args.max_decay_steps - args.warmup_steps,
+                end_lr=args.min_learning_rate,
+                power=1.0)
+        elif args.lr_scheduler == "cosine":
+            assert args.max_decay_steps >= args.warmup_steps
+            scheduler = CosineDecay(
+                args.learning_rate,
+                decay_steps=args.max_decay_steps - args.warmup_steps,
+                end_lr=args.min_learning_rate)
+        else: # constant
+            scheduler = args.learning_rate
+
+        # linear warmup
+        if args.lr_scheduler != "noam" and args.warmup_steps > 0:
+            scheduler = lr.LinearWarmup(
+                scheduler,
+                args.warmup_steps,
+                start_lr=0,
+                end_lr=args.learning_rate)
+        return scheduler
+
+    def _get_optimizer(self, args, lr_scheduler):
+        """Get the optimizer of model.
+
+        Args:
+            args: arguments.
+            lr_scheduler: learning rate scheduler
+
+        Returns:
+            optimizer: the optimizer used in model training.
+        """
+        # grad norm
+        if args.max_grad_norm > 0:
+            grad_clip = fluid.clip.GradientClipByGlobalNorm(args.max_grad_norm)
+        else:
+            grad_clip = None
+
+        # optimizer
+        optimizer_cls = getattr(knover.optim, args.optimizer)
+        optimizer = optimizer_cls(
+            learning_rate=lr_scheduler,
+            grad_clip=grad_clip,
+            weight_decay=args.weight_decay,
+            beta1=args.beta1,
+            beta2=args.beta2)
+        return optimizer
+
+
     def optimize(self, metrics):
         """Optimize the model by loss.
 
         Args:
             metrics: A dict mapping metric names to corresponding metrics, which must include loss.
         """
-        # TODO: support dygraph
-        # lr scheduler
-        if self.lr_scheduler == "noam" and self.warmup_steps <= 0:
-            print("[WARN] Using constant learning rate because of `warmup_steps` is not positive while using NoamScheduler.")
-        if self.lr_scheduler == "noam" and self.warmup_steps > 0:
-            scheduled_lr = layers.learning_rate_scheduler.noam_decay(
-                1 / (self.warmup_steps * (self.learning_rate ** 2)),
-                self.warmup_steps)
-        elif self.lr_scheduler == "linear":
-            scheduled_lr = lr_scheduler.linear_warmup_and_linear_decay(
-                self.learning_rate,
-                self.min_learning_rate,
-                self.warmup_steps,
-                self.max_training_steps)
-        elif self.lr_scheduler == "cosine":
-            scheduled_lr = lr_scheduler.linear_warmup_and_cosine_decay(
-                self.learning_rate,
-                self.min_learning_rate,
-                self.warmup_steps,
-                self.max_training_steps)
-        else: # constant
-            scheduled_lr = layers.create_global_var(
-                name=fluid.unique_name.generate("learning_rate"),
-                shape=[1],
-                value=self.learning_rate,
-                dtype="float32",
-                persistable=True)
-        # grad norm
-        if self.max_grad_norm > 0:
-            grad_clip = fluid.clip.GradientClipByGlobalNorm(self.max_grad_norm)
-        else:
-            grad_clip = None
-
-        # optimizer
-        optimizer_cls = getattr(knover.optim, self.optimizer)
-        optimizer = optimizer_cls(
-            learning_rate=scheduled_lr,
-            grad_clip=grad_clip,
-            weight_decay=self.weight_decay,
-            beta1=self.beta1,
-            beta2=self.beta2)
-
+        optimizer = self._optimizer
         # distributed optimizer
         if self.is_distributed:
             optimizer = fleet.distributed_optimizer(optimizer, strategy=self.dist_strategy)
 
         optimizer.minimize(metrics["loss"])
-        return scheduled_lr
 
     def _execute(self, program, inputs, fetch_dict, **kwargs):
         """Execute program in static graph mode.
@@ -496,6 +519,8 @@ class Model(ABC):
             metrics: A dict mapping keys to corresponding metrics.
         """
         # TODO: support dygraph.
+        if isinstance(self._lr_scheduler, lr.LRScheduler):
+            self._lr_scheduler.step()
         return self._execute(
             self.train_program,
             inputs,

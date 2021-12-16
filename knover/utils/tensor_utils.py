@@ -22,10 +22,8 @@ import paddle.fluid.core as core
 
 
 try:
-    gpu_prop = paddle.device.cuda.get_device_properties()
-    if "A100" in gpu_prop.name:
-        TENSOR_CORE_MULTI = 1
-    elif "V100" in gpu_prop.name:
+    if paddle.version.cuda() < "11.0" or paddle.version.cudnn() < "7.6.3":
+        print("You can upgrade CUDA >= 11.0 & CUDNN >= 7.6.3 to speedup AMP training.")
         TENSOR_CORE_MULTI = 8
     else:
         TENSOR_CORE_MULTI = 1
@@ -59,7 +57,7 @@ def get_tensor(tensor_name, to_np=True):
         return tensor
 
 
-def to_lodtensor(data, place, dtype=None):
+def to_lodtensor(data, place, dtype=None, fdtype="float32"):
     """Convert data to LoDTensor."""
     if place is None:
         return data
@@ -69,7 +67,7 @@ def to_lodtensor(data, place, dtype=None):
         data = [x for xs in data for x in xs]
     if dtype is None:
         if isinstance(data[0], float):
-            dtype = "float32"
+            dtype = fdtype
         else:
             dtype = "int64"
     data = np.array(data, dtype=dtype)

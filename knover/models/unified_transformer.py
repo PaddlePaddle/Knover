@@ -80,8 +80,6 @@ class UnifiedTransformer(Model):
 
         self.mem_efficient = args.mem_efficient
 
-        self.dtype = "float32"
-
         # role embeddings
         self.use_role = args.use_role
         if self.use_role:
@@ -391,7 +389,7 @@ class UnifiedTransformer(Model):
                     name="tgt_ids", shape=[-1, 1, 1], dtype="int64")
                 feed_dict["tgt_pos"] = layers.data(
                     name="tgt_pos", shape=[-1, 1, 1], dtype="int64")
-                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype=self.dtype)
+                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32")
                 feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
                 feed_dict["tgt_generation_mask"] = layers.data(
                     name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
@@ -414,13 +412,13 @@ class UnifiedTransformer(Model):
                 layers.fill_constant_batch_size_like(
                     input=inputs["token_ids"],
                     shape=[-1, 0, self.d_key * self.n_head],
-                    dtype=self.dtype,
+                    dtype="float32",
                     value=0),
                 "v":
                 layers.fill_constant_batch_size_like(
                     input=inputs["token_ids"],
                     shape=[-1, 0, self.d_value * self.n_head],
-                    dtype=self.dtype,
+                    dtype="float32",
                     value=0),
             } for i in range(self.n_layer)]
         else:

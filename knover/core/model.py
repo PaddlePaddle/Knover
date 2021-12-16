@@ -16,6 +16,7 @@
 from abc import abstractmethod, ABC
 import os
 
+import numpy as np
 import paddle
 from paddle.distributed import init_parallel_env
 import paddle.distributed.fleet as fleet
@@ -73,9 +74,18 @@ class Model(ABC):
         group.add_argument("--checkpointing_every_n_layers", type=int, default=1,
                            help="Create checkpointing every n layers.")
         group.add_argument("--use_amp", type=str2bool, default=False,
-                           help="Whether to use automatic mixed precision(AMP) training")
+                           help="Whether to use automatic mixed precision(AMP) training.")
+        group.add_argument("--amp_level", type=str, default="O1",
+                           choices=["O1", "O2"],
+                           help="The level of amp training.")
+        group.add_argument("--use_dynamic_loss_scaling", type=str2bool, default=True,
+                           help="Whether to use dynamic loss scaling in AMP training.")
         group.add_argument("--amp_loss_scaling", type=float, default=32768.,
                            help="The initial loss scaling of AMP.")
+        group.add_argument("--incr_every_n_steps", type=int, default=1000,
+                           help="Increase loss scaling every n consecutive steps with finite gradients.")
+        group.add_argument("--decr_every_n_nan_or_inf", type=int, default=2,
+                           help="Decreases loss scaling every n accumulated steps with nan or inf gradients.")
         group.add_argument("--use_sharding", type=str2bool, default=False,
                            help="Whether to use sharding strategy.")
         group.add_argument("--dp_degree", type=int, default=1, help="Data parallism degree.")
@@ -98,7 +108,11 @@ class Model(ABC):
         self.use_recompute = args.use_recompute
         self.checkpointing_every_n_layers = args.checkpointing_every_n_layers
         self.use_amp = args.use_amp
+        self.amp_level = args.amp_level
+        self.use_dynamic_loss_scaling = args.use_dynamic_loss_scaling
         self.amp_loss_scaling = args.amp_loss_scaling
+        self.incr_every_n_steps = args.incr_every_n_steps
+        self.decr_every_n_nan_or_inf = args.decr_every_n_nan_or_inf
         self.use_sharding = args.use_sharding
         self.dp_degree = args.dp_degree
         self.sharding_degree = args.sharding_degree
@@ -155,8 +169,16 @@ class Model(ABC):
         if self.use_amp:
             dist_strategy.amp = True
             dist_strategy.amp_configs = {
-                "custom_white_list": ["softmax", "layer_norm", "gelu"],
-                "init_loss_scaling": self.amp_loss_scaling
+                "custom_white_list": [],
+                "custom_black_list": ["reduce_sum", "softmax_with_cross_entropy", "elementwise_div"],
+                "use_dynamic_loss_scaling": self.use_dynamic_loss_scaling,
+                "init_loss_scaling": self.amp_loss_scaling,
+                "use_pure_fp16": self.amp_level == "O2",
+                "use_fp16_guard": False,
+                "incr_every_n_steps": self.incr_every_n_steps,
+                "decr_every_n_nan_or_inf": self.decr_every_n_nan_or_inf,
+                "incr_ratio": 2.0,
+                "decr_ratio": 0.5
             }
         if self.use_sharding:
             dist_strategy.sharding = True
@@ -195,6 +217,7 @@ class Model(ABC):
         self.startup_program = fluid.Program()
 
         if self.run_infer:
+            self.dtype = "float32"
             if self.is_distributed and self.use_sharding:
                 init_parallel_env()
             # build inference program
@@ -209,6 +232,7 @@ class Model(ABC):
 
             self.program = self.infer_program
         else:
+            self.dtype = "float32"
             # initialize distributed setting
             if self.is_distributed:
                 self._init_distributed_strategy()
@@ -239,8 +263,14 @@ class Model(ABC):
 
             self.program = self.train_program
 
+            # set dtype for float number.
+            if self.use_amp and self.amp_level == "O2":
+                self.dtype = "float16"
+
         # initialize model
         self.exe.run(self.startup_program)
+        if self.use_amp and self.amp_level == "O2":
+            self._optimizer.amp_init(self.place)
         if self.init_pretraining_params != "":
             self.load(self.init_pretraining_params)
         elif self.init_checkpoint != "":
@@ -321,7 +351,9 @@ class Model(ABC):
             return inputs
         for k in inputs:
             if isinstance(inputs[k], list):
-                inputs[k] = to_lodtensor(inputs[k], self.place)
+                inputs[k] = to_lodtensor(inputs[k], self.place, fdtype=self.dtype)
+            elif isinstance(inputs[k], np.ndarray) and "float" in str(inputs[k].dtype):
+                inputs[k] = inputs[k].astype(self.dtype)
         return inputs
 
     def get_data_loader(self, generator=None, is_infer=False):
@@ -485,12 +517,11 @@ class Model(ABC):
         Args:
             metrics: A dict mapping metric names to corresponding metrics, which must include loss.
         """
-        optimizer = self._optimizer
         # distributed optimizer
         if self.is_distributed:
-            optimizer = fleet.distributed_optimizer(optimizer, strategy=self.dist_strategy)
+            self._optimizer = fleet.distributed_optimizer(self._optimizer, strategy=self.dist_strategy)
 
-        optimizer.minimize(metrics["loss"])
+        self._optimizer.minimize(metrics["loss"])
 
     def _execute(self, program, inputs, fetch_dict, **kwargs):
         """Execute program in static graph mode.

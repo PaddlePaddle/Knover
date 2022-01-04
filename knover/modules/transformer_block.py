@@ -16,7 +16,8 @@
 import collections
 
 import paddle
-from paddle.distributed import fleet
+import paddle.distributed.fleet as fleet
+from paddle.distributed.fleet.meta_parallel import ColumnParallelLinear, RowParallelLinear
 from paddle.distributed.fleet.utils import recompute
 from paddle.fluid import layers
 import paddle.incubate as incubate
@@ -24,6 +25,28 @@ import paddle.nn as nn
 import paddle.nn.functional as F
 import paddle.tensor as tensor
 from paddle.nn.layer.transformer import _convert_param_attr_to_list, _convert_attention_mask
+
+
+def parallel_matmul(lm_output, logit_weights, parallel_output):
+    hcg = fleet.get_hybrid_communicate_group()
+    model_parallel_group = hcg.get_model_parallel_group()
+    world_size = hcg.get_model_parallel_world_size()
+    rank = hcg.get_model_parallel_rank()
+
+    if world_size > 1:
+        input_parallel = paddle.distributed.collective._c_identity(
+            lm_output, group=model_parallel_group)
+
+        logits = paddle.matmul(input_parallel, logit_weights, transpose_y=True)
+
+        if parallel_output:
+            return logits
+
+        return paddle.distributed.collective._c_concat(
+            logits, group=model_parallel_group)
+    else:
+        logits = paddle.matmul(lm_output, logit_weights, transpose_y=True)
+        return logits
 
 
 class MultiHeadAttention(nn.Layer):
@@ -67,35 +90,35 @@ class MultiHeadAttention(nn.Layer):
             assert self.kdim == embed_dim, "embed_dim should be equal to kdim"
             assert self.vdim == embed_dim, "embed_dim should be equal to vidm"
 
-            self.qkv_proj = fleet.meta_parallel.ColumnParallelLinear(
+            self.qkv_proj = ColumnParallelLinear(
                 embed_dim,
                 3 * embed_dim,
                 weight_attr=weight_attr,
                 has_bias=True,
                 gather_output=False)
         else:
-            self.q_proj = fleet.meta_parallel.ColumnParallelLinear(
+            self.q_proj = ColumnParallelLinear(
                 embed_dim,
                 embed_dim,
                 weight_attr=weight_attr,
                 has_bias=True,
                 gather_output=False)
 
-            self.k_proj = fleet.meta_parallel.ColumnParallelLinear(
+            self.k_proj = ColumnParallelLinear(
                 self.kdim,
                 embed_dim,
                 weight_attr=weight_attr,
                 has_bias=True,
                 gather_output=False)
 
-            self.v_proj = fleet.meta_parallel.ColumnParallelLinear(
+            self.v_proj = ColumnParallelLinear(
                 self.vdim,
                 embed_dim,
                 weight_attr=weight_attr,
                 has_bias=True,
                 gather_output=False)
 
-        self.out_proj = fleet.meta_parallel.RowParallelLinear(
+        self.out_proj = RowParallelLinear(
             embed_dim,
             embed_dim,
             weight_attr=weight_attr,
@@ -259,14 +282,14 @@ class TransformerEncoderLayer(nn.Layer):
             num_partitions=num_partitions,
             fuse_qkv=fuse_qkv)
 
-        self.linear1 = fleet.meta_parallel.ColumnParallelLinear(
+        self.linear1 = ColumnParallelLinear(
             d_model,
             dim_feedforward,
             weight_attr=weight_attrs[2],
             gather_output=False,
             has_bias=True)
 
-        self.linear2 = fleet.meta_parallel.RowParallelLinear(
+        self.linear2 = RowParallelLinear(
             dim_feedforward,
             d_model,
             weight_attr=weight_attrs[2],

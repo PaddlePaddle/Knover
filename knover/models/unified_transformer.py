@@ -15,12 +15,14 @@
 
 import numpy as np
 import paddle
+import paddle.distributed.fleet as fleet
+from paddle.distributed.fleet.meta_parallel import VocabParallelEmbedding, ParallelCrossEntropy
 import paddle.nn as nn
 import paddle.nn.functional as F
 
 from knover.models import register_model
 from knover.core.model import Model
-from knover.modules.transformer_block import TransformerEncoderLayer, TransformerEncoder
+from knover.modules.transformer_block import parallel_matmul, TransformerEncoderLayer, TransformerEncoder
 from knover.modules.generator import Generator
 from knover.utils import gather, str2bool
 
@@ -49,7 +51,7 @@ class UnifiedTransformer(Model):
         param_attr = paddle.ParamAttr(initializer=initializer)
 
         # embeddings
-        self.token_embedding = nn.Embedding(args.vocab_size, args.hidden_size, weight_attr=param_attr)
+        self.token_embedding = VocabParallelEmbedding(args.vocab_size, args.hidden_size, weight_attr=param_attr)
         self.type_embedding = nn.Embedding(args.type_vocab_size, args.hidden_size, weight_attr=param_attr)
         self.pos_embedding = nn.Embedding(args.max_position_embeddings, args.hidden_size, weight_attr=param_attr)
 
@@ -70,6 +72,7 @@ class UnifiedTransformer(Model):
             self.input_norm = None
             output_norm = nn.LayerNorm(args.hidden_size)
 
+        hcg = fleet.get_hybrid_communicate_group()
         layers = nn.LayerList()
         for i in range(args.num_hidden_layers):
             layers.append(TransformerEncoderLayer(
@@ -82,7 +85,8 @@ class UnifiedTransformer(Model):
                 act_dropout=0,
                 normalize_before=self.normalize_before,
                 fuse_qkv=args.get("fuse_qkv", False),
-                weight_attr=param_attr
+                weight_attr=param_attr,
+                num_partitions=hcg.get_model_parallel_world_size(),
             ))
         self.encoder = TransformerEncoder(layers, norm=output_norm, use_recompute=args.use_recompute)
 
@@ -92,10 +96,18 @@ class UnifiedTransformer(Model):
         self.lm_trans_norm = nn.LayerNorm(args.hidden_size)
         self.weight_sharing = args.weight_sharing
         if self.weight_sharing:
-            self.lm_logits_bias = paddle.create_parameter(
-                [args.vocab_size], "float32", name="lm_out_fc.b_0", is_bias=True)
+            self.lm_logits_bias = self.create_parameter(
+                shape=[args.vocab_size // hcg.get_model_parallel_world_size()],
+                attr="lm_out_fc.b_0",
+                dtype="float32",
+                is_bias=True)
         else:
             self.lm_out_fc = nn.Linear(args.hidden_size, args.vocab_size, weight_attr=param_attr)
+
+        if hcg.get_model_parallel_world_size() > 1:
+            self.loss_fn = ParallelCrossEntropy()
+        else:
+            self.loss_fn = nn.CrossEntropyLoss(reduction="none")
 
         # task-related
         from knover.modules.generator import GENERATOR_REGISTRY
@@ -232,8 +244,8 @@ class UnifiedTransformer(Model):
         seq_trans_feat = self.lm_trans_norm(seq_trans_feat)
 
         if self.weight_sharing:
-            logits = paddle.matmul(
-                seq_trans_feat, self.token_embedding.weight, transpose_y=True)
+            logits = parallel_matmul(
+                seq_trans_feat, self.token_embedding.weight, parallel_output=True)
             logits += self.lm_logits_bias
         else:
             logits = self.lm_out_fc(seq_trans_feat)
@@ -261,7 +273,8 @@ class UnifiedTransformer(Model):
         metrics = {}
 
         tgt_logits = self._calc_logits(outputs["enc_out"], inputs["tgt_idx"])
-        mean_tgt_lm_loss = F.cross_entropy(tgt_logits, inputs["tgt_label"])
+        tgt_lm_loss = self.loss_fn(tgt_logits, inputs["tgt_label"])
+        mean_tgt_lm_loss = paddle.mean(tgt_lm_loss)
         metrics["token_lm_loss"] = mean_tgt_lm_loss
 
         loss = mean_tgt_lm_loss

@@ -16,6 +16,8 @@
 from collections import defaultdict
 import math
 
+import numpy as np
+
 from knover.core.task import Task
 from knover.data.dialog_reader import DialogReader
 from knover.data.plato_reader import PlatoReader
@@ -209,6 +211,30 @@ class DialogGeneration(Task):
                 new_outputs[k] = (
                     outputs[k] * batch_size + part_outputs[k] * part_batch_size
                 ) / new_outputs["batch_size"]
+        return new_outputs
+
+    def merge_distributed_metrics_and_statistics(self, outputs):
+        """Merge metrics and statistics in distributed mode."""
+        import paddle
+        batch_size = outputs.pop("batch_size")
+        tokens_num = outputs.pop("tokens_num")
+        bsz_tensor = paddle.to_tensor(np.array([batch_size]).astype(np.int))
+        num_tensor = paddle.to_tensor(np.array([tokens_num]).astype(np.int))
+        paddle.distributed.all_reduce(bsz_tensor)
+        paddle.distributed.all_reduce(num_tensor)
+        new_outputs = {
+            "batch_size": bsz_tensor.numpy()[0],
+            "tokens_num": num_tensor.numpy()[0]
+        }
+        for k in outputs:
+            if k.startswith("token_"):
+                tensor = paddle.to_tensor(np.array([outputs[k] * tokens_num]).astype(np.float32))
+                paddle.distributed.all_reduce(tensor)
+                new_outputs[k] = tensor.numpy()[0] / new_outputs["tokens_num"]
+            else:
+                tensor = paddle.to_tensor(np.array([outputs[k] * batch_size]).astype(np.float32))
+                paddle.distributed.all_reduce(tensor)
+                new_outputs[k] = tensor.numpy()[0] / new_outputs["batch_size"]
         return new_outputs
 
     def get_metrics(self, outputs):

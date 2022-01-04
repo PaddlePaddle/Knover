@@ -16,6 +16,7 @@
 from abc import abstractmethod, ABC, ABCMeta
 import os
 
+import numpy as np
 import paddle
 from paddle.distributed import fleet
 import paddle.nn as nn
@@ -280,6 +281,9 @@ class ModelInterface(object):
 
         self._hcg = fleet.get_hybrid_communicate_group()
 
+    def get_global_rank(self):
+        return self._hcg.get_global_rank()
+
     def is_last_rank(self):
         return self._hcg.global_rank == self._hcg.nranks - 1
 
@@ -299,6 +303,12 @@ class ModelInterface(object):
         self._hcg.get_data_parallel_group
         return self._hcg.get_data_parallel_rank() * self._hcg.get_sharding_parallel_world_size() \
             + self._hcg.get_sharding_parallel_rank()
+
+    def sync(self):
+        with paddle.no_grad():
+            tensor = paddle.to_tensor(np.array([1]).astype(np.int))
+            paddle.distributed.all_reduce(tensor, group=self._hcg.get_check_parallel_group())
+        return
 
     def _get_lr_scheduler(self, args):
         assert args.warmup_steps >= 0
@@ -529,7 +539,7 @@ class ModelInterface(object):
         """
         params_path = model_path + ".pdparams"
         print(f"Saving parameters into {params_path}.")
-        paddle.save(self._model.state_dict(), params_path)
+        paddle.save(self._dist_model.state_dict(), params_path)
         if is_checkpoint:
             opt_path = model_path + ".pdopt"
             print(f"Saving optimizer state into {opt_path}.")

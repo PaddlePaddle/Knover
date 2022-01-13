@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 import paddle
-import paddle.distributed.fleet as fleet
+import paddle.distributed as distributed
 import paddle.fluid as fluid
 
 import knover.models as models
@@ -75,6 +75,8 @@ def setup_args():
 def run_cmd(cmd):
     """Helpful function for running shell command in py scripts."""
     exitcode, output = subprocess.getstatusoutput(cmd)
+    if exitcode != 0:
+        raise ValueError("Raise error while running shell command.")
     return output
 
 
@@ -88,30 +90,26 @@ def train(args):
     """The main function of training."""
     set_seeds(args.random_seed)
     if args.is_distributed:
-        fleet.init(is_collective=True)
-
         dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
-        trainers_num = fleet.worker_num()
-        trainer_id = fleet.worker_index()
     else:
         dev_count = 1
         gpu_id = 0
-        trainers_num = 1
-        trainer_id = 0
     place = fluid.CUDAPlace(gpu_id)
 
     # setup task and model
     task = tasks.create_task(args)
     model = models.create_model(args, place)
 
+    global use_vdl
+    use_vdl = args.use_k8s and model.is_last_rank()
     # setup datasets
     train_generator = task.get_data_loader(
         model,
         input_file=args.train_file,
         num_epochs=args.num_epochs,
-        num_part=trainers_num,
-        part_id=trainer_id,
+        num_part=model.get_data_world_size(),
+        part_id=model.get_data_rank(),
         phase="train"
     )
     valid_tags = []
@@ -125,8 +123,8 @@ def train(args):
         valid_generators.append(task.get_data_loader(
             model,
             input_file=valid_file,
-            num_part=dev_count,
-            part_id=gpu_id,
+            num_part=model.get_data_world_size(),
+            part_id=model.get_data_rank(),
             phase="distributed_valid" if args.is_distributed else "valid"
         ))
 
@@ -138,7 +136,6 @@ def train(args):
     else:
         scale = 1.0
         eval_metric = args.eval_metric
-    need_save = trainer_id == 0
 
     # start training
     timer = Timer()
@@ -168,17 +165,16 @@ def train(args):
                     valid_metrics = eval_metrics
 
             # save latest model
-            if args.save_steps <= 0 and need_save:
+            if args.save_steps <= 0:
                 save_model(model, args.save_path, "latest", dev_count, gpu_id, args)
             # maintain best metric (update)
             if valid_metrics[eval_metric] * scale > best_metric:
                 best_metric = valid_metrics[eval_metric] * scale
                 print(f"Get better valid metric: {eval_metric} = {valid_metrics[eval_metric]}")
                 # save best model (with best evaluation metric)
-                if need_save:
-                    save_model(model, args.save_path, "best", dev_count, gpu_id, args)
+                save_model(model, args.save_path, "best", dev_count, gpu_id, args)
 
-        if args.save_steps > 0 and step % args.save_steps == 0 and need_save:
+        if args.save_steps > 0 and step % args.save_steps == 0:
             save_model(model, args.save_path, f"step_{step}", dev_count, gpu_id, args)
 
         timer.start()
@@ -224,7 +220,7 @@ def evaluate(task,
             metrics = task.get_metrics(outputs)
             print(f"\tstep {step}:" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
 
-    if args.is_distributed:
+    if args.is_distributed and dev_count > 1:
         # save part evaluation outputs in distributed mode.
         part_file = os.path.join(args.save_path, f"evaluation_output.part_{gpu_id}")
         with open(part_file, "w") as fp:
@@ -279,9 +275,34 @@ def save_model(model, save_path, tag, dev_count, gpu_id, args):
     """Save model.
 
     In normal mode, only the master GPU need to save the model.
+    In sharding mode, it need to save each part of model in GPUs.
     """
+    # TODO: remove dependency about dev_count and gpu_id.
+    if model.get_data_parallel_rank() != 0:
+        return
     path = os.path.join(save_path, tag)
-    if gpu_id == 0:
+    if args.use_sharding:
+        # save part of model in sharding mode
+        print(f"Saving part of model into {path}.")
+        model.save(path + f".part_{gpu_id}", is_checkpoint=args.save_checkpoint)
+        with open(f"{path}.part_{gpu_id}.finish", "w") as f:
+            pass
+        print(f"Part of model has saved into {path}.")
+
+        # FIXME: maybe wrong
+        num_part = min(model.get_model_world_size(), dev_count)
+        if gpu_id == 0:
+            # waiting for the completion of saving model
+            part_files = f"{tag}.part_*.finish"
+            while True:
+                ret = run_cmd(f"find {save_path} -maxdepth 1 -name {part_files}")
+                num_completed = len(ret.split("\n"))
+                if num_completed == num_part:
+                    break
+                time.sleep(1)
+            print(f"Model has saved into {path}.")
+            run_cmd(f"rm {os.path.join(save_path, part_files)}")
+    elif gpu_id == 0:
         print(f"Saving model into {path}.")
         model.save(path, is_checkpoint=args.save_checkpoint)
         print(f"Model has saved into {path}.")

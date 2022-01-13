@@ -20,6 +20,7 @@ import paddle
 from paddle.distributed import fleet
 import paddle.nn as nn
 import paddle.optimizer.lr as lr
+from paddle.distributed.fleet.meta_optimizers.dygraph_optimizer import DygraphShardingOptimizer
 from paddle.distributed.fleet.utils.hybrid_parallel_util import fused_allreduce_gradients
 
 import knover.optim
@@ -114,7 +115,10 @@ class Model(nn.Layer, metaclass=ModelMeta):
             inputs: A dict mapping keys to corresponding Tensors.
         """
         if isinstance(inputs, dict):
-            return {k: paddle.Tensor(v) for k, v in inputs.items()}
+            return {
+                k: v if paddle.is_tensor() else paddle.Tensor(v)
+                for k, v in inputs.items()
+            }
         if is_infer:
             return dict(zip(self.infer_feed_names, inputs))
         else:
@@ -133,10 +137,9 @@ class Model(nn.Layer, metaclass=ModelMeta):
         Returns:
             metrics: A dict mapping keys to corresponding metrics.
         """
-        inputs = self._get_inputs(inputs)
         outputs = self.forward(inputs)
         metrics = self.get_metrics(inputs, outputs)
-        return self._get_outputs(metrics)
+        return metrics
 
     def eval_step(self, inputs):
         """Run one evaluation step.
@@ -147,12 +150,11 @@ class Model(nn.Layer, metaclass=ModelMeta):
         Returns:
             metrics: A dict mapping keys to corresponding metrics.
         """
-        inputs = self._get_inputs(inputs)
         outputs = self.forward(inputs)
         metrics = self.get_metrics(inputs, outputs)
         statistics = self.get_statistics(inputs, outputs)
         metrics.update(statistics)
-        return self._get_outputs(metrics)
+        return metrics
 
     def infer_step(self, inputs):
         """Run one inference step.
@@ -163,20 +165,21 @@ class Model(nn.Layer, metaclass=ModelMeta):
         Returns:
             predictions: A dict mapping keys to corresponding predictions.
         """
-        inputs = self._get_inputs(inputs, is_infer=True)
         outputs = self.forward(inputs, is_infer=True)
         predictions = self.infer(inputs, outputs)
-        return self._get_outputs(predictions)
+        return predictions
 
-    def __call__(self, inputs, mode="train"):
+    def __call__(self, *inputs, mode="train"):
+        inputs = self._get_inputs(inputs, is_infer=mode == "infer")
         if mode == "train":
-            return self.train_step(inputs)
+            outputs = self.train_step(inputs)
         elif mode == "eval":
-            return self.eval_step(inputs)
+            outputs = self.eval_step(inputs)
         elif mode == "infer":
-            return self.infer_step(inputs)
+            outputs = self.infer_step(inputs)
         else:
             raise ValueError(f"Unspported mode: {mode}.")
+        return self._get_outputs(outputs)
 
 
 class ModelInterface(object):
@@ -222,9 +225,19 @@ class ModelInterface(object):
         # recompute related
         group.add_argument("--use_recompute", type=str2bool, default=False,
                            help="Whether to use recompute to save memory usage.")
+        group.add_argument("--use_sharding", type=str2bool, default=False,
+                           help="Whether to use sharding strategy.")
+        group.add_argument("--dp_degree", type=int, default=1, help="Data parallism degree.")
+        group.add_argument("--sharding_degree", type=int, default=1, help="Sharding parallism degree.")
+        group.add_argument("--mp_degree", type=int, default=1, help="Tensor model parallism degree.")
+        group.add_argument("--pp_degree", type=int, default=1, help="Pipeline model parallism degree.")
         return group
 
-    def __init__(self, args, model, place):
+    def __init__(self, args, model_cls, place):
+        self._init_distributed_envs(args)
+
+        model = model_cls(args)
+
         assert isinstance(model, Model), "The model must be an instance of Model"
         self._model = model
         self._is_distributed = args.is_distributed and fleet.worker_num() > 1
@@ -241,7 +254,7 @@ class ModelInterface(object):
             # now only support data parallel for dygraph.
             if self._use_amp:
                 self._scaler = fleet.distributed_scaler(self._scaler)
-            self._dp_model = fleet.distributed_model(self._model)
+            self._dist_model = fleet.distributed_model(self._model)
             self._optimizer = fleet.distributed_optimizer(self._optimizer)
 
         # initialize paramters
@@ -249,6 +262,43 @@ class ModelInterface(object):
             self.load(args.init_checkpoint, is_checkpoint=True)
         elif args.init_pretraining_params != "":
             self.load(args.init_pretraining_params)
+
+    def _init_distributed_envs(self, args):
+        dist_strategy = fleet.DistributedStrategy()
+        if args.use_sharding:
+            dist_strategy.hybrid_configs = {
+                "dp_degree": args.dp_degree,
+                "sharding_degree": args.sharding_degree,
+                "mp_degree": args.mp_degree,
+                "pp_degree": args.pp_degree
+            }
+            dist_strategy.tensor_parallel_configs = {
+                "tensor_init_seed": args.random_seed
+            }
+        self._dist_strategy = dist_strategy
+        fleet.init(is_collective=True, strategy=self._dist_strategy)
+
+        self._hcg = fleet.get_hybrid_communicate_group()
+
+    def is_last_rank(self):
+        return self._hcg.global_rank == self._hcg.nranks - 1
+
+    def get_data_parallel_world_size(self):
+        return self._hcg.get_data_parallel_world_size()
+
+    def get_data_parallel_rank(self):
+        return self._hcg.get_data_parallel_rank()
+
+    def get_model_world_size(self):
+        return self._hcg.nranks // self.get_data_parallel_world_size()
+
+    def get_data_world_size(self):
+        return self._hcg.get_data_parallel_world_size() * self._hcg.get_sharding_parallel_world_size()
+
+    def get_data_rank(self):
+        self._hcg.get_data_parallel_group
+        return self._hcg.get_data_parallel_rank() * self._hcg.get_sharding_parallel_world_size() \
+            + self._hcg.get_sharding_parallel_rank()
 
     def _get_lr_scheduler(self, args):
         assert args.warmup_steps >= 0
@@ -308,11 +358,23 @@ class ModelInterface(object):
             grad_clip = nn.ClipGradByGlobalNorm(args.max_grad_norm)
         else:
             grad_clip = None
-        optimizer = optimizer_cls(
-            lr_scheduler,
-            parameters=self._model.parameters(),
-            weight_decay=args.weight_decay,
-            grad_clip=grad_clip)
+
+        self._use_sharding = args.use_sharding
+        if args.use_sharding and args.sharding_degree > 1:
+            optimizer = DygraphShardingOptimizer(
+                hcg=self._hcg,
+                user_defined_strategy=self._dist_strategy,
+                params=self._model.parameters(),
+                inner_optimizer_class=optimizer_cls,
+                learning_rate=lr_scheduler,
+                weight_decay=args.weight_decay,
+                grad_clip=grad_clip)
+        else:
+            optimizer = optimizer_cls(
+                lr_scheduler,
+                parameters=self._model.parameters(),
+                weight_decay=args.weight_decay,
+                grad_clip=grad_clip)
 
         if self._use_amp:
             self._scaler = paddle.amp.GradScaler(init_loss_scaling=args.amp_loss_scaling)
@@ -367,7 +429,7 @@ class ModelInterface(object):
         """Run one training step.
 
         Args:
-            inputs: A dict mapping keys to corresponding input data.
+            inputs: A list of input data. All elements are Tensor.
 
         Returns:
             metrics: A dict mapping keys to corresponding metrics.
@@ -378,20 +440,20 @@ class ModelInterface(object):
                 custom_black_list=["reduce_sum", "c_softmax_with_cross_entropy", "elementwise_div"],
                 level=self._amp_level):
             if self._is_distributed:
-                self._dp_model.train()
-                if self._use_recompute:
-                    with self._dp_model.no_sync():
-                        metrics = self._dp_model(inputs, mode="train")
+                self._dist_model.train()
+                if not self._use_sharding and self._use_recompute:
+                    with self._dist_model.no_sync():
+                        metrics = self._dist_model(*inputs, mode="train")
                         self.backward(metrics["loss"])
                 else:
-                    metrics = self._dp_model(inputs, mode="train")
+                    metrics = self._dist_model(*inputs, mode="train")
                     self.backward(metrics["loss"])
             else:
                 self._model.train()
-                metrics = self._model(inputs, mode="train")
+                metrics = self._model(*inputs, mode="train")
                 self.backward(metrics["loss"])
         if self._is_distributed and self._use_recompute:
-            fused_allreduce_gradients(list(self._dp_model.parameters()), None)
+            fused_allreduce_gradients(list(self._dist_model.parameters()), None)
         self.optimize(metrics)
         return self._get_outputs(metrics)
 
@@ -399,7 +461,7 @@ class ModelInterface(object):
         """Run one evaluation step.
 
         Args:
-            inputs: A dict mapping keys to corresponding input data.
+            inputs: A list of input data. All elements are Tensor.
 
         Returns:
             metrics: A dict mapping keys to corresponding metrics (numpy arrays).
@@ -411,29 +473,29 @@ class ModelInterface(object):
                 custom_black_list=["reduce_sum", "c_softmax_with_cross_entropy", "elementwise_div"],
                 level=self._amp_level):
                 if self._is_distributed:
-                    self._dp_model.eval()
-                    metrics = self._dp_model(inputs, mode="eval")
+                    self._dist_model.eval()
+                    metrics = self._dist_model(*inputs, mode="eval")
                 else:
                     self._model.eval()
-                    metrics = self._model(inputs, mode="eval")
+                    metrics = self._model(*inputs, mode="eval")
         return self._get_outputs(metrics)
 
     def infer_step(self, inputs):
         """Run one inference step.
 
         Args:
-            inputs: A dict mapping keys to corresponding input data.
+            inputs: A list of input data. All elements are Tensor.
 
         Returns:
             predictions: A dict mapping keys to corresponding predictions (numpy arrays).
         """
         with paddle.no_grad():
             if self._is_distributed:
-                self._dp_model.eval()
-                predictions = self._dp_model(inputs, mode="infer")
+                self._dist_model.eval()
+                predictions = self._dist_model(*inputs, mode="infer")
             else:
                 self._model.eval()
-                predictions = self._model(inputs, mode="infer")
+                predictions = self._model(*inputs, mode="infer")
         return self._get_outputs(predictions)
 
     def get_data_loader(self, generator=None, is_infer=False):

@@ -45,8 +45,7 @@ def register_model(name):
 
 def create_model(args, place) -> ModelInterface:
     """Create a model."""
-    model = MODEL_REGISTRY[args.model](args)
-    return ModelInterface(args, model, place)
+    return ModelInterface(args, MODEL_REGISTRY[args.model], place)
 
 
 def add_cmdline_args(parser):

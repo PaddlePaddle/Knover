@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 
 def setup_args():
+    """Setup arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--in_file", required=True)
     parser.add_argument("--out_file", required=True)
@@ -22,10 +23,11 @@ def setup_args():
 
 
 def main(args):
+    """Main function."""
     logs = json.load(open(args.log_file))
     knowledge = json.load(open(args.knowledge_file))
 
-    def convert_to_tgt(domain, entity, doc):
+    def __convert_to_tgt(domain, entity, doc):
         field_names = ["[DOMAIN]", "[ENTITY]", "[TITLE]", "[BODY]"]
         field_values = [domain]
         if entity["name"] is not None:
@@ -65,7 +67,7 @@ def main(args):
                     entity = knowledge[domain][entity_id]
                     for doc_id in entity["docs"]:
                         doc = entity["docs"][doc_id]
-                        tgt = convert_to_tgt(domain, entity, doc)
+                        tgt = __convert_to_tgt(domain, entity, doc)
                         out_f.write(f"{dialog}\t{tgt}\1{0}\n")
 
 

@@ -21,10 +21,8 @@ import paddle.fluid as fluid
 def create_predictor(inference_model_path, is_distributed=False):
     """Create predictor."""
     if is_distributed:
-        dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
     else:
-        dev_count = 1
         gpu_id = 0
 
     place = fluid.CUDAPlace(gpu_id)

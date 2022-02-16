@@ -18,13 +18,17 @@ import argparse
 from tqdm import tqdm
 
 from knover.utils import parse_args
-from knover.utils import SentencePieceTokenizer
+import knover.utils.tokenization as tokenization
 
 
 def setup_args():
     """Setup arguments."""
     parser = argparse.ArgumentParser()
-    SentencePieceTokenizer.add_cmdline_args(parser)
+
+    parser.add_argument("--tokenizer", type=str, default="SentencePieceTokenizer")
+    args, _ = parser.parse_known_args()
+    tokenizer_cls = getattr(tokenization, args.tokenizer)
+    tokenizer_cls.add_cmdline_args(parser)
 
     parser.add_argument("--input_file", type=str, required=True)
     parser.add_argument("--output_file", type=str, required=True)
@@ -35,7 +39,8 @@ def setup_args():
 
 def main(args):
     """Tokenization main process."""
-    tokenizer = SentencePieceTokenizer(args)
+    tokenizer_cls = getattr(tokenization, args.tokenizer)
+    tokenizer = tokenizer_cls(args)
     tokenized_fields = ["src", "tgt", "knowledge"]
     with open(args.input_file) as fp, open(args.output_file, "w") as output_fp:
         headers = next(fp).rstrip("\n").split("\t")

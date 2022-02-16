@@ -1,14 +1,6 @@
 #!/bin/bash
 set -eux
 
-if [[ $# == 1 ]]; then
-    job_conf=$1
-    source ${job_conf}
-elif [[ $# > 1 ]]; then
-    echo "usage: sh $0 [job_conf]"
-    exit -1
-fi
-
 python -m \
     knover.scripts.save_inference_model \
     --model ${model} \

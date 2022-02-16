@@ -75,3 +75,17 @@ def check_cuda(use_cuda, err=ERROR_MESSAGE):
             sys.exit(1)
     except Exception as e:
         pass
+
+
+@contextmanager
+def open_file(filename):
+    """Construct a file handler.
+
+    The handler can read a normal file or a file compressed by `gzip`.
+    """
+    if filename.endswith(".gz"):
+        fp = gzip.open(filename, "rt")
+    else:
+        fp = open(filename)
+    yield fp
+    fp.close()

@@ -24,7 +24,7 @@ if __name__ == "__main__":
     print(setuptools.find_packages())
     setuptools.setup(
         name="knover-dygraph",
-        version="0.1.0",
+        version="0.2.0",
         description="Large-scale open domain KNOwledge grounded conVERsation system based on PaddlePaddle",
         long_description=readme,
         long_description_content_type="text/markdown",
@@ -37,7 +37,7 @@ if __name__ == "__main__":
         ],
         python_requires=">=3.7",
         install_requires=[
-            "paddlepaddle-gpu>=2.0.1",
+            "paddlepaddle-gpu>=2.1.2",
             "numpy",
             "sentencepiece",
             "termcolor",

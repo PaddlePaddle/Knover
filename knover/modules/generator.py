@@ -85,7 +85,7 @@ class Generator(object):
         self.length_average = args.length_average
         self.length_penalty = args.length_penalty
         if self.length_average and self.length_penalty is not None:
-            print(f"[WARMING] Using length_average only and ignore length_penalty settings ({self.length_penalty}).")
+            print(f"[WARNING] Using length_average only and ignore length_penalty settings ({self.length_penalty}).")
 
         # model related
         self.use_role = args.use_role
@@ -246,8 +246,8 @@ class Sampling(Generator):
 
     def _process_final_state(self, state):
         bsz = state["batch_size"]
-        state["predictions"] = paddle.reshape(state["predictions"], [bsz, self.num_samples, -1])
-        state["score"] = paddle.reshape(state["score"], [bsz, self.num_samples])
+        state["predictions"] = paddle.transpose(paddle.reshape(state["predictions"], [self.num_samples, bsz, -1]), [1, 0, 2])
+        state["score"] = paddle.transpose(paddle.reshape(state["score"], [self.num_samples, bsz]), [1, 0])
         return state
 
 

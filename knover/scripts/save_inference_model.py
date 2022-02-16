@@ -15,6 +15,7 @@
 
 import argparse
 
+import paddle
 import paddle.fluid as fluid
 
 import knover.models as models
@@ -40,7 +41,6 @@ def setup_args():
 
 def save(args):
     """Save inference model."""
-    dev_count = 1
     gpu_id = 0
     place = fluid.CUDAPlace(gpu_id)
 
@@ -51,6 +51,7 @@ def save(args):
 
 
 if __name__ == "__main__":
+    paddle.enable_static()
     args = setup_args()
     check_cuda(True)
     save(args)

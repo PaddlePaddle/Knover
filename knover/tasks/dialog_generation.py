@@ -16,6 +16,8 @@
 from collections import defaultdict
 import math
 
+import numpy as np
+
 from knover.core.task import Task
 from knover.data.dialog_reader import DialogReader
 from knover.data.plato_reader import PlatoReader
@@ -68,7 +70,9 @@ class DialogGeneration(Task):
             self.reader = DialogReader(args)
 
         if args.nsp_inference_model_path:
-            self.nsp_predictor = create_predictor(args.nsp_inference_model_path, args.get("is_distributed", False))
+            self.nsp_predictor = create_predictor(
+                args.nsp_inference_model_path,
+                args.get("is_distributed", False))
         else:
             self.nsp_predictor = None
 
@@ -97,15 +101,14 @@ class DialogGeneration(Task):
 
         predictions = []
         for data_id in group:
-            try:
+            if data_id in self.reader.features:
                 example = self.reader.features[data_id]
-            except:
+            else:
                 example = None
             preds = group[data_id]
             for pred in preds:
                 # TODO: fix tokenized input
                 if example is None:
-                    # include knowledges now
                     words = post_process_context(pred["context_token_ids"], self.reader)
                 elif self.reader.use_role:
                     words = [self.reader.tokenizer.preprocess(s.split("\1")[0]).split(" ")
@@ -116,8 +119,7 @@ class DialogGeneration(Task):
                 pred_token_ids, pred_words = post_process_response(pred["response_token_ids"], self.reader)
                 num_token = len(pred_token_ids)
 
-                cross_turn_repetition = check_cross_turn_repetition(
-                    words, pred_words, self.reader.eos_id, self.is_cn)
+                cross_turn_repetition = check_cross_turn_repetition(words, pred_words, self.is_cn)
                 in_turn_repetition = check_in_turn_repetition(pred_words, self.is_cn) \
                     or check_in_turn_repetition(pred_token_ids)
 
@@ -135,9 +137,13 @@ class DialogGeneration(Task):
                 if example is not None:
                     print("Example:", example.data_id)
                     print("Context:")
-                    for s in example.src.split(" [SEP] "):
+                    context = example.src.split(" [SEP] ")
+                    for i, s in enumerate(context):
                         if self.reader.use_role:
-                            s, role_id = s.split("\1")
+                            if "\1" in s:
+                                s, role_id = s.split("\1")
+                            else:
+                                role_id = (len(context) - i) % 2
                             s = f"{role_id}: {s}"
                         print("\t" + s)
                     if "knowledge" in example._fields:
@@ -205,6 +211,30 @@ class DialogGeneration(Task):
                 new_outputs[k] = (
                     outputs[k] * batch_size + part_outputs[k] * part_batch_size
                 ) / new_outputs["batch_size"]
+        return new_outputs
+
+    def merge_distributed_metrics_and_statistics(self, outputs):
+        """Merge metrics and statistics in distributed mode."""
+        import paddle
+        batch_size = outputs.pop("batch_size")
+        tokens_num = outputs.pop("tokens_num")
+        bsz_tensor = paddle.to_tensor(np.array([batch_size]).astype(np.int))
+        num_tensor = paddle.to_tensor(np.array([tokens_num]).astype(np.int))
+        paddle.distributed.all_reduce(bsz_tensor)
+        paddle.distributed.all_reduce(num_tensor)
+        new_outputs = {
+            "batch_size": bsz_tensor.numpy()[0],
+            "tokens_num": num_tensor.numpy()[0]
+        }
+        for k in outputs:
+            if k.startswith("token_"):
+                tensor = paddle.to_tensor(np.array([outputs[k] * tokens_num]).astype(np.float32))
+                paddle.distributed.all_reduce(tensor)
+                new_outputs[k] = tensor.numpy()[0] / new_outputs["tokens_num"]
+            else:
+                tensor = paddle.to_tensor(np.array([outputs[k] * batch_size]).astype(np.float32))
+                paddle.distributed.all_reduce(tensor)
+                new_outputs[k] = tensor.numpy()[0] / new_outputs["batch_size"]
         return new_outputs
 
     def get_metrics(self, outputs):
@@ -277,7 +307,7 @@ def post_process_response(token_ids, reader, merge=True):
     return token_ids, response
 
 
-def check_cross_turn_repetition(context, pred, eos_idx, is_cn=False):
+def check_cross_turn_repetition(context, pred, is_cn=False):
     """Check the cross-turn repetition.
 
     Calcuate tri-gram repetition.

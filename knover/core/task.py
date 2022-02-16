@@ -71,6 +71,19 @@ class Task(ABC):
             ) / new_outputs["batch_size"]
         return new_outputs
 
+    def merge_distributed_metrics_and_statistics(self, outputs):
+        """Merge metrics and statistics in distributed mode."""
+        import paddle
+        batch_size = outputs.pop("batch_size")
+        bsz_tensor = paddle.to_tensor(np.array([batch_size]).astype(np.int))
+        paddle.distributed.all_reduce(bsz_tensor)
+        new_outputs = {"batch_size": bsz_tensor.numpy()[0]}
+        for k in outputs:
+            tensor = paddle.to_tensor(np.array([outputs[k] * batch_size]).astype(np.float))
+            paddle.distributed.all_reduce(tensor)
+            new_outputs[k] = tensor.numpy()[0] / new_outputs["batch_size"]
+        return new_outputs
+
     def get_metrics(self, outputs):
         """Get metrics."""
         if outputs is None:

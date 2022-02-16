@@ -20,7 +20,6 @@ import os
 import subprocess
 import time
 
-import paddle
 import paddle.fluid as fluid
 from paddle.distributed import fleet
 
@@ -78,7 +77,7 @@ def infer(args):
     timer = Timer()
     timer.start()
     infer_out = {}
-    step = 0 # in case of no data input
+    step = 0 # fix no input data case.
     for step, data in enumerate(infer_generator(), 1):
         predictions = task.infer_step(model, data)
         for pred in predictions:

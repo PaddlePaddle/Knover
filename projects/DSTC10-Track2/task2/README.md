@@ -41,4 +41,29 @@ The *knowledge-grounded-response-generation.json* file provides the system respo
 - `response`: The target system response.
 
 ## Inference
-The trained models will be released before the end of February 2022.
+### Requirements:
+* [Knover](../..)
+
+### Download Dataset and Models
+
+The [dataset](https://dialogue.bj.bcebos.com/Knover/projects/DSTC10-Track2/task2/data.tar) (based on dataset provided by [DSTC10-Track2](https://github.com/alexa/alexa-with-dstc10-track2-dataset)) for inference contains:
+
+* Dialogue logs and labels: `${DATASET_TYPE}_logs.json` and `${DATASET_TYPE}_labels.json`
+* External knowledge base: `knowledge.json`
+* Entities and locations: `entities.json` and `locations.json` (extracted from `knowledge.json` to enable fuzzy matching)
+
+We also provide our models which are used in our submissions.
+
+* Subtask1 fine-tuned model:
+    * [SOP-32L-Detection](https://dialogue.bj.bcebos.com/Knover/projects/DSTC10-Track2/task2/SOP-32L-Detection.tar): the pre-trained 32L evaluation model optimized with SOP and MLM loss and the knowledge-seeking turn detection is estimated based on the dialogue context.
+* Subtask2 fine-tuned model:
+    * [SOP-32L-Selection](https://dialogue.bj.bcebos.com/Knover/projects/DSTC10-Track2/task2/SOP-32L-Selection.tar): the pre-trained 32L evaluation model optimized with SOP and MLM loss and the knowledge selection is estimated with the dialogue context and the external knowledge.
+* Subtask3 fine-tuned model:
+    * [SU-32L](https://dialogue.bj.bcebos.com/Knover/projects/DSTC10-Track2/task2/SU-32L.tar): the pre-trained 32L generation model optimized with NLL loss and the knowledge grounded generation task is based on the dialogue context and carried out with the retrieved knowledge.
+
+
+### Run Inference
+Here is the script used in our submission 0. The script contains download commands and inference commands.
+```bash
+bash ./submission_0_infer.sh
+```

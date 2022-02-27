@@ -1,7 +1,9 @@
 # AG-DST
-[**Amendable Generation for Dialogue State Tracking**](https://arxiv.org/abs/2110.15659)
+[**Amendable Generation for Dialogue State Tracking**](https://aclanthology.org/2021.nlp4convai-1.8)
 
-![AG-DST Architecture](./images/AG-DST.png)
+<p align="center">
+  <img width="70%" src="./images/AG-DST.png" alt="AG-DST Architecture" />
+</p>
 
 ## Abstract
 In task-oriented dialogue systems, recent dialogue state tracking methods tend to perform one-pass generation of the dialogue state based on the previous dialogue state. The mistakes of these models made at the current turn are prone to be carried over to the next turn, causing error propagation.
@@ -19,7 +21,7 @@ Experimental results show that AG-DST significantly outperforms previous works i
 - [Citation](#Citation)
 - [Contact Information](#Contact-Information)
 
-## Requirements:
+## Requirements
 * [Knover](../..)
 
 ## Usage
@@ -51,13 +53,19 @@ bash ./infer.sh
 After inference and evaluation, you can find results of inference and evaluation score in `./output`.
 
 ## Citation
-Please cite the [arXiv paper](https://arxiv.org/abs/2110.15659) if you use AG-DST in your work:
+Please cite the [paper](https://aclanthology.org/2021.nlp4convai-1.8) if you use AG-DST in your work:
 ```bibtex
-@article{tian2021amendable,
-  title={Amendable Generation for Dialogue State Tracking},
-  author={Tian, Xin and Huang, Liankai and Lin, Yingzhan and Bao, Siqi and He, Huang and Yang, Yunyi and Wu, Hua and Wang, Fan and Sun, Shuqi},
-  journal={arXiv preprint arXiv:2110.15659},
-  year={2021}
+@inproceedings{tian-etal-2021-amendable,
+  title = "Amendable Generation for Dialogue State Tracking",
+  author = "Tian, Xin and Huang, Liankai and Lin, Yingzhan and Bao, Siqi and He, Huang and Yang, Yunyi and Wu, Hua and Wang, Fan and Sun, Shuqi",
+  booktitle = "Proceedings of the 3rd Workshop on Natural Language Processing for Conversational AI",
+  month = nov,
+  year = "2021",
+  address = "Online",
+  publisher = "Association for Computational Linguistics",
+  url = "https://aclanthology.org/2021.nlp4convai-1.8",
+  doi = "10.18653/v1/2021.nlp4convai-1.8",
+  pages = "80--92"
 }
 ```
 

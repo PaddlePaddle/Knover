@@ -48,6 +48,7 @@ def setup_args():
 
     args = parse_args(parser)
     args.load(args.config_path, "Model")
+    args.run_evaluate = True
     args.display()
     return args
 

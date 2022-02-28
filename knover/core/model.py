@@ -141,6 +141,7 @@ class Model(ABC):
 
         # model mode
         self.run_infer = args.get("run_infer", False)
+        self.run_evaluate = args.get("run_evaluate", False)
         self.batch_size = args.get("batch_size", 1)
 
         self._build_programs()
@@ -232,6 +233,8 @@ class Model(ABC):
 
                     # build evaluation program
                     self.eval_program = self.train_program.clone(for_test=True)
+                    with open(f"eval_{fleet.worker_index()}", "w") as f:
+                        f.write(str(self.eval_program))
                     self.eval_fetch_dict = dict(**metrics)
 
                     if not self.use_sharding:
@@ -244,7 +247,42 @@ class Model(ABC):
                         metrics["loss_scaling"] = loss_scaling
                     self.train_fetch_dict = metrics
 
-            self.program = self.train_program
+            if self.run_evaluate:
+                # prune startup program
+                block = self.startup_program.global_block()
+                s_varname = set([var_name for var_name in block.vars])
+                e_varname = set([var_name for var_name in self.eval_program.global_block().vars])
+                diff_varname = s_varname - e_varname
+                diff_varname.remove("comm_id_0")
+                for idx, op in reversed(list(enumerate(block.ops))):
+                    for output_name in op.desc.output_arg_names():
+                        if output_name not in diff_varname:
+                            continue
+                        block._remove_op(idx, sync=False)
+                        break
+                for var_name in diff_varname:
+                    block._remove_var(var_name, sync=False)
+                block._sync_with_cpp()
+
+                # prune main program
+                block = self.train_program.global_block()
+                s_varname = set([var_name for var_name in block.vars])
+                e_varname = set([var_name for var_name in self.eval_program.global_block().vars])
+                diff_varname = s_varname - e_varname
+                if "comm_id_0" in diff_varname:
+                    diff_varname.remove("comm_id_0")
+                for idx, op in reversed(list(enumerate(block.ops))):
+                    for output_name in op.desc.output_arg_names():
+                        if output_name not in diff_varname:
+                            continue
+                        block._remove_op(idx, sync=False)
+                        break
+                for var_name in diff_varname:
+                    block._remove_var(var_name, sync=False)
+                block._sync_with_cpp()
+                self.program = self.eval_program
+            else:
+                self.program = self.train_program
 
         # initialize model
         self.exe.run(self.startup_program)

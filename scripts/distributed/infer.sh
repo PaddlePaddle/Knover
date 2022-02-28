@@ -14,6 +14,11 @@ export FLAGS_fuse_parameter_memory_size=64
 
 mkdir -p ${save_path}
 
+if [[ ${spm_model_file:-""} != "" ]]; then
+    save_args="--spm_model_file ${spm_model_file} ${save_args:-}"
+    infer_args="--spm_model_file ${spm_model_file} ${infer_args:-}"
+fi
+
 if [[ ${log_dir:-""} != "" ]]; then
     distributed_args="${distributed_args:-} --log_dir ${log_dir}"
 fi
@@ -27,7 +32,6 @@ if [[ ${nsp_init_params:-} != "" ]]; then
             --task NextSentencePrediction \
             --vocab_path ${vocab_path} \
             --init_pretraining_params ${nsp_init_params} \
-            --spm_model_file ${spm_model_file} \
             --inference_model_path ${nsp_init_params} \
             ${save_args:-} \
             --config_path ${config_path}
@@ -61,7 +65,6 @@ fleetrun \
     --vocab_path ${vocab_path} \
     --config_path ${config_path} \
     --do_lower_case ${do_lower_case:-"false"} \
-    --spm_model_file ${spm_model_file} \
     --init_pretraining_params ${init_params} \
     --infer_file ${infer_file} \
     --data_format ${data_format:-"raw"} \

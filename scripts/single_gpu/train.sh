@@ -14,13 +14,16 @@ export FLAGS_fuse_parameter_memory_size=64
 
 mkdir -p ${save_path}
 
-python \
-    ./knover/scripts/train.py \
+if [[ ${spm_model_file:-""} != "" ]]; then
+    train_args="--spm_model_file ${spm_model_file} ${train_args:-}"
+fi
+
+python -m \
+    knover.scripts.train \
     --model ${model} \
     --task ${task} \
     --vocab_path ${vocab_path} \
     --do_lower_case ${do_lower_case:-"false"} \
-    --spm_model_file ${spm_model_file} \
     --init_pretraining_params ${init_params:-""} \
     --init_checkpoint ${init_checkpoint:-""} \
     --train_file ${train_file} \

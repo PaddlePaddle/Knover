@@ -18,15 +18,15 @@ The Track-1 of DSTC9 aims to effectively answer user requests or questions durin
 * External knowledge base: `${DATASET_TYPE}_knowledge.json`
 * Schema description: `schema_desc.json` (based on schema.json in [MultiWOZ 2.2](https://github.com/budzianowski/multiwoz))
 
-We also provide our models which are used in our submissions.
+We also provide the models used in our submissions.
 
 * Task1 fine-tuned model:
-    * [SOP-32L-Context](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SOP-32L-Context.tar): the pre-trained 32L evaluation model optimized with SOP and MLM loss and the knowledge-seeking turn detection is estimated based on the dialogue context.
-    * [SOP-32L-Schema](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SOP-32L-Schema.tar): the pre-trained 32L evaluation model optimized with SOP and MLM loss and the knowledge-seeking turn detection is estimated with the dialogue context, external knowledges and schema descriptions.
+    * [SOP-32L-Context](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SOP-32L-Context.tar): based on the pre-trained 32L dialogue evaluation model optimized with SOP and MLM loss, the knowledge-seeking turn detection is estimated with the dialogue context.
+    * [SOP-32L-Schema](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SOP-32L-Schema.tar): based on the pre-trained 32L dialogue evaluation model optimized with SOP and MLM loss, the knowledge-seeking turn detection is estimated with the dialogue context, external knowledges and schema descriptions.
 * Task2 fine-tuned model:
-    * [SOP-32L-Selection](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SOP-32L-Selection.tar): the pre-trained 32L evaluation model optimized with SOP and MLM loss and the knowledge selection is estimated with the dialogue context and the external knowledge.
+    * [SOP-32L-Selection](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SOP-32L-Selection.tar): based on the pre-trained 32L dialogue evaluation model optimized with SOP and MLM loss, the knowledge selection is estimated with the dialogue context and the external knowledge.
 * Task3 fine-tuned model:
-    * [SU-32L](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SU-32L.tar): the pre-trained  32L generation model optimized with NLL loss and the knowledge grounded generation task is based on the dialogue context and carried out with the retrieved knowledge.
+    * [SU-32L](https://dialogue.bj.bcebos.com/Knover/projects/DSTC9-Track1/SU-32L.tar): based on the pre-trained 32L dialogue generation model optimized with NLL loss, the knowledge grounded generation task is carried out with the dialogue context and the retrieved knowledge.
 
 
 ## Run Inference

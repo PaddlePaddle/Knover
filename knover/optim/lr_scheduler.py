@@ -19,6 +19,7 @@ from paddle.optimizer.lr import LRScheduler
 
 
 class CosineDecay(LRScheduler):
+    """Cosine decay LR scheduler."""
 
     def __init__(self,
                  learning_rate,
@@ -33,6 +34,7 @@ class CosineDecay(LRScheduler):
                                           verbose)
 
     def get_lr(self):
+        """Get the current lr."""
         if self.last_epoch < self.decay_steps:
             return self.end_lr + (self.base_lr - self.end_lr) * 0.5 * (
                 math.cos((self.last_epoch * math.pi / self.decay_steps)) + 1)

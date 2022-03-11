@@ -34,6 +34,13 @@ except:
 
 
 def to_optimized_size(sz):
+    """Padding sequence to speedup matmul OP.
+
+    According to the tensor cores documentation from NVIDIA, the matmul OP in fp16 must all be multiples of
+    TENSOR_CORE_MULTI to get the speedup from fp16.
+    See more detail:
+    https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html#requirements-tc
+    """
     return (sz + TENSOR_CORE_MULTI - 1) // TENSOR_CORE_MULTI * TENSOR_CORE_MULTI
 
 
@@ -59,11 +66,11 @@ def pad_batch_data(insts, pad_id=0):
 
 
 def repeat(x, times):
-    """Repeate tensor."""
+    """Repeat tensor."""
     if isinstance(x, dict):
         return {k: repeat(v, times) for k, v in x.items()}
     elif isinstance(x, list):
-        return [repeate(v, times) for v in x]
+        return [repeat(v, times) for v in x]
     elif isinstance(x, paddle.Tensor):
         return paddle.tile(x, [times] + [1] * (len(x.shape) - 1))
     else:

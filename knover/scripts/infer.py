@@ -21,7 +21,6 @@ import subprocess
 import time
 
 import paddle.fluid as fluid
-from paddle.distributed import fleet
 
 import knover.models as models
 import knover.tasks as tasks
@@ -32,10 +31,10 @@ def setup_args():
     """Setup inference arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--is_distributed", type=str2bool, default=False)
+    parser.add_argument("--debug", type=str2bool, default=False)
     parser.add_argument("--save_path", type=str, default="output")
     parser.add_argument("--infer_file", type=str, required=True)
     parser.add_argument("--output_name", type=str, required=True)
-
     parser.add_argument("--log_steps", type=int, default=1)
 
     models.add_cmdline_args(parser)
@@ -51,8 +50,6 @@ def setup_args():
 def infer(args):
     """Inference main function."""
     if args.is_distributed:
-        fleet.init(is_collective=True)
-
         dev_count = fluid.core.get_cuda_device_count()
         gpu_id = int(os.getenv("FLAGS_selected_gpus"))
         phase = "distributed_test"
@@ -64,11 +61,15 @@ def infer(args):
 
     task = tasks.create_task(args)
     model = models.create_model(args, place)
+    if args.debug:
+        task.debug()
+
+    # setup dataset
     infer_generator = task.get_data_loader(
         model,
         input_file=args.infer_file,
-        num_part=dev_count,
-        part_id=gpu_id,
+        num_part=model.get_data_world_size(),
+        part_id=model.get_data_rank(),
         phase=phase,
         is_infer=True
     )

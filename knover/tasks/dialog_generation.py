@@ -70,9 +70,7 @@ class DialogGeneration(Task):
             self.reader = DialogReader(args)
 
         if args.nsp_inference_model_path:
-            self.nsp_predictor = create_predictor(
-                args.nsp_inference_model_path,
-                args.get("is_distributed", False))
+            self.nsp_predictor = create_predictor(args.nsp_inference_model_path)
         else:
             self.nsp_predictor = None
 
@@ -427,7 +425,11 @@ def get_nsp_score_batch(nsp_predictor, predictions):
                 tgt=response_tokenized_input,
                 data_id=i
             )
-            record = reader._convert_example_to_record(example, is_infer=True)
+            try:
+                record = reader._convert_example_to_record(example, is_infer=True)
+            except ValueError as e:
+                print(f"[FATAL] {e}")
+                raise e
             yield record
         return
 

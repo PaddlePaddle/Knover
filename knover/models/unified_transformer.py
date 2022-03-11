@@ -203,7 +203,6 @@ class UnifiedTransformer(Model):
             state["tgt_generation_mask"],
         )
         logits = self._calc_logits(enc_out)
-        logits = logits[:, 0]
         return logits
 
     def _encode(self, emb_input, attn_bias, caches=None):
@@ -233,7 +232,7 @@ class UnifiedTransformer(Model):
             logits: the logits of prediction task, shape is [num_predictions, vocab_size].
         """
         if tgt_idx is None:
-            seq_feat = paddle.reshape(x=enc_out, shape=[-1, self.hidden_size])
+            seq_feat = paddle.reshape(x=enc_out, shape=[-1, enc_out.shape[-1]])
         elif len(tgt_idx.shape) == 2 and tgt_idx.shape[1] == 2:
             seq_feat = paddle.gather_nd(enc_out, tgt_idx)
         else:

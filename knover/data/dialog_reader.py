@@ -280,27 +280,36 @@ class DialogReader(object):
 
         return field_values
 
+    def _merge_field_values(self, field_values1, field_values2):
+        if field_values1 is None:
+            return field_values2
+        if field_values2 is None:
+            return field_values1
+        return {
+            k: field_values1[k] + field_values2[k]
+            for k in field_values1
+        }
+
     def _convert_example_to_record(self, example, is_infer):
         """Convert an example to a record which can be used as the model's input."""
-        field_values = self._parse_src(example.src)
+        if "src" in example._fields:
+            field_values = self._parse_src(example.src)
+            if len(field_values["token_ids"]) == 1:
+                raise ValueError(f"Invalid example: context too long / no context - {example}")
+        else:
+            field_values = None
 
         if self.max_knowledge_len > 0:
             # add knowledge
             knowledge_field_values = self._parse_knowledge(example.knowledge)
             if self.knowledge_position == "pre_src":
-                field_values = {
-                    k: knowledge_field_values[k] + field_values[k]
-                    for k in field_values
-                }
+                field_values = self._merge_field_values(knowledge_field_values, field_values)
             else:
-                field_values = {
-                    k: field_values[k] + knowledge_field_values[k]
-                    for k in field_values
-                }
+                field_values = self._merge_field_values(field_values, knowledge_field_values)
 
-        tgt_start_idx = len(field_values["token_ids"])
+        tgt_start_idx = len(field_values["token_ids"]) if field_values is not None else 0
 
-        if self.position_style == "relative":
+        if self.position_style == "relative" and field_values is not None:
             ctx_len = len(field_values["token_ids"])
             field_values["pos_ids"] = [
                 self.max_tgt_len + ctx_len - i - 1
@@ -309,10 +318,7 @@ class DialogReader(object):
 
         if not is_infer and hasattr(example, "tgt"):
             tgt_field_values = self._parse_tgt(example.tgt)
-            field_values = {
-                k: field_values[k] + tgt_field_values[k]
-                for k in field_values
-            }
+            field_values = self._merge_field_values(field_values, tgt_field_values)
 
         if self.position_style == "continuous":
             field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
@@ -488,7 +494,7 @@ class DialogReader(object):
 
     def _batch_reader(self, reader, phase=None, is_infer=False):
         """Construct a batch reader from a record reader."""
-        if self.sort_pool_size > 0 and not is_infer:
+        if self.sort_pool_size > 0 and phase == "train":
             return self._get_sorted_batch(reader)
         else:
             return self._get_batch(reader)
@@ -567,11 +573,16 @@ class DialogReader(object):
                 batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id, is_test=True)
 
             for epoch_index in range(num_epochs):
-                if phase == "train":
-                    self.current_example = 0
-                    self.current_epoch = epoch_index + 1
-                for batch in batch_reader():
-                    yield self._pad_batch_records(batch, is_infer, phase=phase)
+                try:
+                    if phase == "train":
+                        self.current_example = 0
+                        self.current_epoch = epoch_index + 1
+                    for batch in batch_reader():
+                        yield self._pad_batch_records(batch, is_infer, phase=phase)
+                except:
+                    import traceback
+                    traceback.print_exc()
+                    raise
 
         return __wrapper__
 

@@ -181,8 +181,11 @@ def multi_head_attention(queries,
         # v, which is the cache input for next time step, reshape the cache
         # input from the previous time step first.
         cache_k, cache_v = cache["k"], cache["v"]
-        select_k = layers.gather(cache_k, index=gather_idx)
-        select_v = layers.gather(cache_v, index=gather_idx)
+        if gather_idx is not None:
+            select_k = layers.gather(cache_k, index=gather_idx)
+            select_v = layers.gather(cache_v, index=gather_idx)
+        else:
+            select_k, select_v = cache_k, cache_v
 
         select_k = layers.reshape(select_k, shape=[0, 0, d_key * n_head])
         select_v = layers.reshape(select_v, shape=[0, 0, d_value * n_head])

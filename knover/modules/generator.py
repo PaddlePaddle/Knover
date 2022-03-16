@@ -122,12 +122,15 @@ class Generator(object):
         eos_penalty = layers.assign(eos_penalty)
 
         token_penalty = np.zeros(self.vocab_size, dtype="float32")
-        token_penalty[self.unk_id] = -1e9
-        if self.mask_id >= 0:
+        if self.ignore_unk:
+            token_penalty[self.unk_id] = -1e9
+        if self.mask_id is not None and self.mask_id >= 0:
             token_penalty[self.mask_id] = -1e9
         token_penalty = layers.assign(token_penalty)
 
         state = model._initialize_state(inputs, step_idx)
+        if self.decoding_strategy == "beam_search":
+            state["parent_idx"] = inputs["parent_idx"]
 
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
@@ -137,9 +140,7 @@ class Generator(object):
             dec_out, _ = model._generation_network(**model_input)
             logits = model._calc_logits(dec_out)
 
-            # ignore unk and mask token
-            if self.ignore_unk:
-                logits = layers.elementwise_add(logits, token_penalty, axis=1)
+            logits = layers.elementwise_add(logits, token_penalty, axis=1)
 
             # min dec length
             min_len_cond = layers.less_than(x=step_idx, y=min_len)
@@ -150,6 +151,9 @@ class Generator(object):
                 """No penalty."""
                 return logits
             logits = layers.case([(min_len_cond, min_len_penalty)], default=no_penalty)
+
+            the_eos_penalty = state["is_finished"] * eos_penalty
+            logits = logits - the_eos_penalty
 
             # get probs
             probs = layers.softmax(logits / self.temperature)
@@ -201,18 +205,27 @@ class Generator(object):
             layers.increment(x=step_idx, value=1.0, in_place=True)
             cur_len = layers.cast(step_idx, "float32")
 
+            # avoid nan in beam_search
+            small_prob_cond = layers.cast(topk_scores < 1e-9, topk_scores.dtype)
+            topk_scores = topk_scores * (1 - small_prob_cond) + 1e-9 * small_prob_cond
+            topk_scores = layers.log(topk_scores)
+
             # update scores
             if self.length_average:
                 accu_scores = layers.elementwise_add(
-                    x=layers.log(topk_scores), y=pre_scores * pre_len, axis=0) / cur_len
+                    x=topk_scores, y=pre_scores * pre_len, axis=0) / cur_len
             elif self.length_penalty > 0:
                 pre_lp = layers.pow((5 + pre_len) / 6, self.length_penalty)
                 cur_lp = layers.pow((5 + cur_len) / 6, self.length_penalty)
                 accu_scores = layers.elementwise_add(
-                    x=layers.log(topk_scores), y=pre_scores * pre_lp, axis=0) / cur_lp
+                    x=topk_scores, y=pre_scores * pre_lp, axis=0) / cur_lp
             else:
                 accu_scores = layers.elementwise_add(
-                    x=layers.log(topk_scores), y=pre_scores, axis=0)
+                    x=topk_scores, y=pre_scores, axis=0)
+            x = layers.elementwise_mul(accu_scores, 1 - state["is_finished"], axis=0)
+            y = layers.elementwise_mul(pre_scores, state["is_finished"], axis=0)
+            accu_scores = layers.elementwise_add(x, y, axis=0)
+            accu_scores = accu_scores * (1 - small_prob_cond) - 1e9 * small_prob_cond
             topk_indices = layers.lod_reset(topk_indices, pre_ids)
             accu_scores = layers.lod_reset(accu_scores, pre_ids)
             selected_ids, selected_scores, parent_idx = layers.beam_search(
@@ -221,19 +234,20 @@ class Generator(object):
                 ids=topk_indices,
                 scores=accu_scores,
                 beam_size=beam_size,
-                end_id=self.eos_id,
+                end_id=-1,
                 return_parent_idx=True)
 
+            if self.decoding_strategy == "beam_search":
+                layers.assign(parent_idx, state["parent_idx"])
             state = model._update_state(
                 state,
                 model_input,
                 selected_ids,
                 selected_scores,
-                parent_idx,
                 step_idx)
 
             length_cond = layers.less_than(x=step_idx, y=max_len)
-            finish_cond = layers.logical_not(layers.is_empty(x=selected_ids))
+            finish_cond = layers.logical_not(layers.reduce_all(layers.cast(state["is_finished"], "bool")))
             layers.logical_and(x=length_cond, y=finish_cond, out=cond)
 
         finished_ids, finished_scores = layers.beam_search_decode(
@@ -243,6 +257,8 @@ class Generator(object):
             "finished_ids": finished_ids,
             "finished_scores": finished_scores,
             "token_ids": inputs["token_ids"],
-            "data_id": inputs["data_id"]
+            "data_id": inputs["data_id"],
+            "pos_ids": state["tgt_pos"],
+            "generation_mask": state["tgt_generation_mask"],
         }
         return predictions

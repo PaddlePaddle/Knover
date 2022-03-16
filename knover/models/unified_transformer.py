@@ -388,10 +388,10 @@ class UnifiedTransformer(Model):
         if is_infer:
             if self.do_generation:
                 feed_dict["tgt_ids"] = layers.data(
-                    name="tgt_ids", shape=[-1, 1, 1], dtype="int64", lod_level=2)
+                    name="tgt_ids", shape=[-1, 1, 1], dtype="int64")
                 feed_dict["tgt_pos"] = layers.data(
-                    name="tgt_pos", shape=[-1, 1, 1], dtype="int64", lod_level=2)
-                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
+                    name="tgt_pos", shape=[-1, 1, 1], dtype="int64")
+                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype=self.dtype)
                 feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
                 feed_dict["tgt_generation_mask"] = layers.data(
                     name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
@@ -501,31 +501,39 @@ class UnifiedTransformer(Model):
     def _initialize_state(self, inputs, step_idx):
         state = {}
         state["tgt_ids"] = layers.array_write(layers.reshape(inputs["tgt_ids"], [-1, 1]), step_idx)
-        state["tgt_pos"] = layers.array_write(layers.reshape(inputs["tgt_pos"], [-1, 1, 1]), step_idx)
-        state["scores"] = layers.array_write(inputs["init_score"], step_idx)
-        state["tgt_generation_mask"] = layers.array_write(inputs["tgt_generation_mask"], step_idx)
-        state["parent_idx"] = inputs["parent_idx"]
+        state["tgt_pos"] = inputs["tgt_pos"]
+        init_score = inputs["init_score"]
+        state["scores"] = layers.array_write(init_score, step_idx)
+        state["tgt_generation_mask"] = inputs["tgt_generation_mask"]
+        state["is_finished"] = layers.fill_constant_batch_size_like(init_score, [-1, 1], "float32", 0)
         return state
 
     def _prepare_timestep_input(self, state, step_idx):
-        model_input = {"gather_idx": state["parent_idx"]}
+        model_input = {}
+        if "parent_idx" in state:
+            model_input["gather_idx"] = state["parent_idx"]
 
         # token ids
         pre_ids = layers.array_read(array=state["tgt_ids"], i=step_idx)
         model_input["token_ids"] = layers.unsqueeze(pre_ids, 1)
 
         # position ids
-        pre_pos = layers.array_read(array=state["tgt_pos"], i=step_idx)
-        model_input["pos_ids"] = layers.gather(pre_pos, state["parent_idx"])
+        pre_pos = state["tgt_pos"]
+        if "parent_idx" in state:
+            pre_pos = layers.gather(pre_pos, state["parent_idx"])
+        pre_pos = layers.reshape(pre_pos, [-1, 1, 1])
+        model_input["pos_ids"] = pre_pos
 
         pre_scores = layers.array_read(array=state["scores"], i=step_idx)
 
         # generation_mask
-        tgt_generation_mask = layers.array_read(state["tgt_generation_mask"], i=step_idx)
-        append_mask = layers.fill_constant_batch_size_like(pre_ids, [-1, 1, 1], "float32", 1.0)
+        tgt_generation_mask = state["tgt_generation_mask"]
+        if "parent_idx" in state:
+            tgt_generation_mask = layers.gather(tgt_generation_mask, state["parent_idx"])
+        append_mask = layers.unsqueeze(1 - state["is_finished"], [2])
         tgt_generation_mask = layers.concat([tgt_generation_mask, append_mask], axis=2)
 
-        model_input["generation_mask"] = pre_mask = layers.gather(tgt_generation_mask, state["parent_idx"])
+        model_input["generation_mask"] = pre_mask = tgt_generation_mask
 
         model_input["type_ids"] = layers.fill_constant_batch_size_like(pre_mask, [-1, 1, 1], "int64", 1)
         if self.use_role:
@@ -538,13 +546,25 @@ class UnifiedTransformer(Model):
                       model_input,
                       selected_ids,
                       selected_scores,
-                      parent_idx,
                       step_idx):
         layers.array_write(selected_ids, i=step_idx, array=state["tgt_ids"])
         layers.array_write(selected_scores, i=step_idx, array=state["scores"])
-        layers.array_write(model_input["generation_mask"], i=step_idx, array=state["tgt_generation_mask"])
-        layers.array_write(model_input["pos_ids"] + 1, i=step_idx, array=state["tgt_pos"])
-        layers.assign(parent_idx, state["parent_idx"])
+        layers.assign(model_input["generation_mask"], state["tgt_generation_mask"])
+        pos_ids = layers.elementwise_add(
+            model_input["pos_ids"],
+            layers.cast(1 - state["is_finished"], "int64"),
+            axis=0)
+        layers.assign(pos_ids, state["tgt_pos"])
+
+        # update is_finished
+        is_finished = state["is_finished"]
+        if "parent_idx" in state:
+            is_finished = layers.gather(is_finished, state["parent_idx"])
+        is_finished = layers.logical_or(
+            layers.cast(is_finished, "bool"),
+            selected_ids == self.args.eos_id)
+        is_finished = layers.cast(is_finished, "float32")
+        layers.assign(is_finished, state["is_finished"])
         return state
 
     def _run_generation(self, inputs):

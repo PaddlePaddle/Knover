@@ -175,8 +175,12 @@ class Model(ABC):
                 "pp_degree": self.pp_degree
             }
         self.dist_strategy = dist_strategy
+        self._init_build_strategy()
         print(self.dist_strategy)
         return
+
+    def _init_build_strategy(self):
+        pass
 
     def _set_checkpoints(self, checkpoints):
         """Set checkpoints for recompute.
@@ -270,7 +274,11 @@ class Model(ABC):
             if not is_checkpoint and not fluid.io.is_parameter(var):
                 return False
             # only load existing variable.
-            return os.path.exists(os.path.join(model_path, var.name))
+            if os.path.exists(os.path.join(model_path, var.name)):
+                return True
+            else:
+                print(f"Warning: {var.name} does not exist.")
+                return False
         fluid.io.load_vars(
             self.exe,
             model_path,

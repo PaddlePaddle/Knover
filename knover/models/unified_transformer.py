@@ -122,6 +122,9 @@ class UnifiedTransformer(Model):
         Returns:
             A Tuple contains the input embeddings and the attention masking matrix of Transformer.
         """
+        if name != "":
+            name = name + "_"
+
         token_emb_out = layers.embedding(
             input=token_ids,
             size=[self.vocab_size, self.emb_size],
@@ -233,7 +236,7 @@ class UnifiedTransformer(Model):
                             generation_mask=None,
                             aux_emb=None,
                             gather_idx=None,
-                            name="encoder"):
+                            name=""):
         """Run Transformer generation network.
 
         Args:
@@ -254,13 +257,15 @@ class UnifiedTransformer(Model):
             pos_ids,
             role_ids,
             generation_mask,
-            aux_emb=aux_emb)
+            aux_emb=aux_emb,
+            name=name)
+
         return self._encode(
             emb_out,
             attn_bias,
             caches=self.generation_caches,
             gather_idx=gather_idx,
-            name=name)
+            name="encoder" if name == "" else name)
 
     def _encode(self,
                 emb_input,

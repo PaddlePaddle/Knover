@@ -59,5 +59,7 @@ def add_cmdline_args(parser):
 
 
 import knover.tasks.classification
+import knover.tasks.dense_embedding
 import knover.tasks.dialog_generation
+import knover.tasks.knowledge_augmented_generation
 import knover.tasks.next_sentence_prediction

@@ -115,6 +115,9 @@ class DialogReader(object):
         # random_seed must be set for data slicing when using multi-gpu
         self.global_rng = np.random.RandomState(args.random_seed)
 
+        # task-related
+        self.do_generation = args.get("do_generation", False)
+
         # training progress
         self.current_example = 0
         self.current_epoch = 0
@@ -308,7 +311,7 @@ class DialogReader(object):
                 for i in range(ctx_len)
             ]
 
-        if not is_infer and hasattr(example, "tgt"):
+        if (not is_infer or not self.do_generation) and hasattr(example, "tgt"):
             tgt_field_values = self._parse_tgt(example.tgt)
             field_values = {
                 k: field_values[k] + tgt_field_values[k]
@@ -347,7 +350,7 @@ class DialogReader(object):
             cols = list(map(lambda x: list(map(int, x.split(" "))), cols))
             if len(cols) > self.num_numerical_fields:
                 cols = cols[:self.num_numerical_fields]
-            if is_infer:
+            if is_infer and self.do_generation:
                 tgt_start_idx = len(cols[0])
             else:
                 # get the start position of target sequence
@@ -638,18 +641,28 @@ class DialogReader(object):
             batch_tgt_start_idx=batch_tgt_start_idx)
 
         if is_infer:
-            tgt_ids = np.array([[[self.bos_id]]] * len(batch_token_ids), dtype="int64")
-            if self.position_style == "continuous":
-                tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
-            else:
-                tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
-            tgt_pos = tgt_pos.reshape(-1, 1, 1)
-            batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
-            batch["tgt_ids"] = tgt_ids.tolist()
-            batch["tgt_pos"] = tgt_pos.tolist()
-            batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
+            if self.do_generation:
+                tgt_ids = np.array([[[self.bos_id]]] * len(batch_token_ids), dtype="int64")
+                if self.position_style == "continuous":
+                    tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
+                else:
+                    tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
+                tgt_pos = tgt_pos.reshape(-1, 1, 1)
+                batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
+                batch["tgt_ids"] = tgt_ids.tolist()
+                batch["tgt_pos"] = tgt_pos.tolist()
+                batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
 
-            batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :].astype("float32")
+                batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :]
+            else:
+                batch["tgt_label"], batch["tgt_idx"] = mask(
+                    batch_tokens=batch_token_ids,
+                    vocab_size=self.vocab_size,
+                    tgt_starts=batch_tgt_start_idx,
+                    bos_id=self.bos_id,
+                    eos_id=self.eos_id,
+                    mask_id=self.mask_id,
+                    is_unidirectional=True)
 
             batch_data_id = [record.data_id for record in batch_records]
             batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])

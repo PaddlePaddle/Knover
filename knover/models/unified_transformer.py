@@ -386,14 +386,18 @@ class UnifiedTransformer(Model):
             dtype=self.dtype)
 
         if is_infer:
-            feed_dict["tgt_ids"] = layers.data(
-                name="tgt_ids", shape=[-1, 1, 1], dtype="int64", lod_level=2)
-            feed_dict["tgt_pos"] = layers.data(
-                name="tgt_pos", shape=[-1, 1, 1], dtype="int64", lod_level=2)
-            feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
-            feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
-            feed_dict["tgt_generation_mask"] = layers.data(
-                name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
+            if self.do_generation:
+                feed_dict["tgt_ids"] = layers.data(
+                    name="tgt_ids", shape=[-1, 1, 1], dtype="int64", lod_level=2)
+                feed_dict["tgt_pos"] = layers.data(
+                    name="tgt_pos", shape=[-1, 1, 1], dtype="int64", lod_level=2)
+                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
+                feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
+                feed_dict["tgt_generation_mask"] = layers.data(
+                    name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
+            else:
+                feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
+                feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
             feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
@@ -404,7 +408,7 @@ class UnifiedTransformer(Model):
     def forward(self, inputs, is_infer=False):
         """Run model main forward."""
         outputs = {}
-        if is_infer:
+        if is_infer and self.do_generation:
             self.generation_caches = [{
                 "k":
                 layers.fill_constant_batch_size_like(
@@ -465,7 +469,23 @@ class UnifiedTransformer(Model):
         if self.do_generation:
             return self.generator.inference(self, inputs, outputs)
         else:
-            raise NotImplementedError
+            tgt_logits = self._calc_logits(outputs["enc_out"], inputs["tgt_idx"])
+            tgt_lm_loss = layers.softmax_with_cross_entropy(
+                logits=tgt_logits, label=inputs["tgt_label"])
+            lm_loss = layers.fill_constant_batch_size_like(
+                outputs["enc_out"], [-1], self.dtype, 0)
+            lm_loss = layers.scatter(lm_loss, inputs["tgt_idx"][:, 0], tgt_lm_loss[:, 0], overwrite=False)
+            tokens_num = layers.fill_constant_batch_size_like(
+                outputs["enc_out"], [-1], self.dtype, 0)
+            tgt_tokens_num = layers.fill_constant_batch_size_like(
+                tgt_lm_loss, [-1], self.dtype, 1)
+            tokens_num = layers.scatter(tokens_num, inputs["tgt_idx"][:, 0], tgt_tokens_num, overwrite=False)
+            predictions = {
+                "lm_loss": lm_loss,
+                "tokens_num": tokens_num,
+                "data_id": inputs["data_id"]
+            }
+            return predictions
 
     def _get_batch_size(self, inputs):
         """Get the batch size of inputs."""
@@ -585,5 +605,5 @@ class UnifiedTransformer(Model):
         else:
             return self._execute(
                 self.infer_program,
-                self._get_feed(inputs, is_infer=True),
+                self._get_feed(inputs),
                 self.infer_fetch_dict)

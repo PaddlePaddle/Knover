@@ -170,7 +170,17 @@ class DialogGeneration(Task):
 
         The score is calculated by perplexity (PPL).
         """
-        raise NotImplementedError
+        return [
+            {
+                "data_id": data_id.tolist()[0],
+                "lm_loss": float(lm_loss),
+                "ppl": math.exp(lm_loss / tokens_num),
+                "tokens_num": int(tokens_num)
+            }
+            for data_id, lm_loss, tokens_num in zip(
+                predictions["data_id"], predictions["lm_loss"], predictions["tokens_num"]
+            )
+        ]
 
     def _post_process_infer_output(self, predictions):
         """Post-process inference output.

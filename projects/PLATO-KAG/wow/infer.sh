@@ -39,6 +39,7 @@ python ./projects/PLATO-KAG/wow/build_generation_infer_data.py \
 # eval F1
 python ./projects/PLATO-KAG/tools/generation_metrics.py \
     --refer_file $OUTPUT_PATH/${PHASE}_${SPLIT}/selection/output/infer_data.tsv \
-    --hypo_file ${OUTPUT_PATH}/${PHASE}_${SPLIT}/generation/output/inference_output.txt
+    --hypo_file ${OUTPUT_PATH}/${PHASE}_${SPLIT}/generation/output/inference_output.txt \
+    --include_topic
 
 

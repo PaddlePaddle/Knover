@@ -37,6 +37,7 @@ class KnowledgeAugmentedGeneration(DialogGeneration):
         group.add_argument("--ranking_score", type=str, default="decode_score",
                            help="Which score will be used to rerank.")
         group.add_argument("--do_kag_training", type=str2bool, default=False)
+        group.add_argument("--multi_eval", type=str2bool, default=False)
 
         KAGReader.add_cmdline_args(parser)
         return group
@@ -45,6 +46,7 @@ class KnowledgeAugmentedGeneration(DialogGeneration):
         super(KnowledgeAugmentedGeneration, self).__init__(args)
         self.reader = KAGReader(args)
         self.do_kag_training = args.do_kag_training
+        self.multi_eval = args.multi_eval
         return
 
     def merge_metrics_and_statistics(self, outputs, part_outputs):
@@ -98,4 +100,19 @@ class KnowledgeAugmentedGeneration(DialogGeneration):
             if k == "token_lm_loss":
                 metrics["ppl"] = math.exp(outputs[k])
         return metrics
+
+    def _post_process_scoring_output(self, predictions):
+        return [
+            {
+                "data_id": data_id,
+                "lm_loss": float(lm_loss),
+                "ppl": math.exp(lm_loss / tokens_num),
+                "tokens_num": int(tokens_num),
+                "token_lm_loss": float(lm_loss / tokens_num),
+                "gt_response": self.reader.features[data_id].tgt.split("\1")[0]
+            }
+            for data_id, lm_loss, tokens_num in zip(
+                predictions["data_id"][:, 0].tolist(), predictions["lm_loss"], predictions["tokens_num"]
+            )
+        ]
 

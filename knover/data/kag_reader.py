@@ -38,7 +38,6 @@ class KAGReader(DialogReader):
             "args.max_knowledge_len + args.max_src_len + args.max_tgt_len + args.max_tpoic_len > args.max_seq_len"
 
         self.do_kag_training = args.do_kag_training
-
         if self.do_kag_training:
             self._parse_fields_for_kag_training(args)
         return
@@ -288,7 +287,7 @@ class KAGReader(DialogReader):
                 for i in range(ctx_len)
             ]
 
-        if not is_infer and hasattr(example, "tgt"):
+        if (not is_infer or not self.do_generation) and hasattr(example, "tgt"):
             tgt_field_values = self._parse_tgt(example.tgt)
             field_values = {
                 k: field_values[k] + tgt_field_values[k]

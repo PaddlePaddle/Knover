@@ -13,13 +13,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Automatic metrics for generation task."""
+"""Evaluate multi-reference generation."""
 
 import argparse
 from collections import Counter
+import json
+import math
+import random
 import re
 
 import numpy as np
+from tqdm import tqdm
 
 re_art = re.compile(r"\b(a|an|the)\b")
 re_punc = re.compile(r"[!\"#$%&()*+,-./:;<=>?@\[\]\\^`{|}~_\']")
@@ -27,9 +31,9 @@ re_punc = re.compile(r"[!\"#$%&()*+,-./:;<=>?@\[\]\\^`{|}~_\']")
 def setup_args():
     """Setup arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--refer_file", type=str, required=True)
-    parser.add_argument("--hypo_file", type=str, required=True)
-    parser.add_argument("--include_topic", action="store_true")
+    parser.add_argument("--eval_output_file", type=str, required=True)
+    parser.add_argument("--gen_output_file", type=str, required=True)
+    parser.add_argument("--infer_input_file", type=str, required=True)
     args = parser.parse_args()
     return args
 
@@ -93,58 +97,76 @@ def f1_metric(hypothesis, references):
         re.append(_re)
     return np.mean(pre), np.mean(re), np.mean(f1)
 
+
 def main(args):
     """Main function."""
-    gt_list = []
-    selected_k_list = []
-    with open(args.refer_file) as gt_f:
+    pred_items = []
+    prev_src = None
+    cur_item = None
+    with open(args.eval_output_file, "r") as eval_f, open(args.gen_output_file, "r") as gen_f, open(args.infer_input_file, "r") as input_f:
+        header = next(input_f)
         while True:
             try:
-                line = next(gt_f).strip()
-                if args.include_topic:
-                    topic, src, selected_k, response = line.split("\t")
+                src, selected_k, tgt = next(input_f).strip().split("\t")
+                # new line
+                if src != prev_src:
+                    if cur_item:
+                        pred_items.append(cur_item)
+                    prev_src = src
+
+                    cur_item = dict()
+                    cur_item["selected_k"] = selected_k
+
+                    pred = next(gen_f).strip()
+                    cur_item["pred"] = pred
+
+                    eval_output = next(eval_f).strip().split("\t")
+                    if len(eval_output) == 2:
+                        eval_output += [""]
+                    token_num, token_loss, tgt = eval_output
+                    cur_item["labels"] = [tgt]
+                    cur_item["token_num"] = [int(token_num)]
+                    cur_item["token_loss"] = [float(token_loss)]
                 else:
-                    src, selected_k, response = line.split("\t")
-                if len(response.split("\1")) == 2:
-                    response, role_id = response.split("\1")
-                selected_k_list.append(selected_k)
-                gt_list.append(response)
+                    eval_output = next(eval_f).strip().split("\t")
+                    if len(eval_output) == 2:
+                        eval_output += [""]
+                    token_num, token_loss, tgt = eval_output
+                    cur_item["labels"].append(tgt)
+                    cur_item["token_num"].append(int(token_num))
+                    cur_item["token_loss"].append(float(token_loss))
             except Exception as e:
-                print("finish loading reference file")
-                break
-    gt_list = gt_list[1:]
-    selected_k_list = selected_k_list[1:]
-
-    gen_list = []
-    with open(args.hypo_file) as infer_file:
-        while True:
-            try:
-                gen_list.append(next(infer_file).strip())
-            except:
-                print("finish loading hypothesis file")
+                print("finish")
                 break
 
-    f1 = f1_metric(gen_list, gt_list)
-    print(f"\nUnigram F1: {f1[-1]:.3f}")
-    k_f1 = f1_metric(gen_list, selected_k_list)
-    print(f"Knowledge F1: {k_f1[-1]:.3f}")
+    pred_items.append(cur_item)
+    num_sample = len(pred_items)
+    print(num_sample)
 
+    total_loss = 0
+    total_num = 0
+    f1_sum = 0
+    kf1_sum = 0
+
+    for item in pred_items:
+        item_min_idx = item["token_loss"].index(min(item["token_loss"]))
+        total_loss += item["token_num"][item_min_idx] * item["token_loss"][item_min_idx]
+        total_num += item["token_num"][item_min_idx]
+
+        item_f1_list = []
+        for gt in item["labels"]:
+            _, _, f1 = f1_metric([item["pred"]], [gt])
+            item_f1_list.append(f1)
+        max_f1 = max(item_f1_list)
+        f1_sum += max_f1
+
+        kf1_sum += f1_metric([item["pred"]], [item["selected_k"]])[-1]
+
+    multi_gen_loss = total_loss / total_num
+    print(f"\nPPL: {math.exp(multi_gen_loss):.3f}")
+    print(f"Unigram F1: {f1_sum/num_sample:.3f}")
+    print(f"Knowledge F1: {kf1_sum/num_sample:.3f}")
 
 if __name__ == "__main__":
     args = setup_args()
     main(args)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

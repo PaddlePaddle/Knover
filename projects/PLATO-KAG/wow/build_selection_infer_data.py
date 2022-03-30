@@ -103,8 +103,6 @@ def main(args):
     data = json.load(open(args.data_file))
     print("total diglogs:", len(data))
 
-    null_doc = convert_to_tgt(TOKEN_NOCHOSEN, TOKEN_NOCHOSEN)
-
     total_turn = 0
     total_example = 0
     out_knowledge = {}
@@ -199,7 +197,6 @@ def main(args):
         chosen_topic = d.get("chosen_topic", "")
         chosen_topic_passages = d["chosen_topic_passage"]
 
-        context_by_now = []
         for idx in range(len(d["dialog"])):
             is_wizard_turn = "Wizard" in d["dialog"][idx]["speaker"]
             # current is wizard

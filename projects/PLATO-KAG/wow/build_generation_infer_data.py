@@ -83,9 +83,9 @@ def main(args):
 
         selected_k.append(cands_list[candidates[index[0]]])
 
-    print(f"\nrecall@1 = {cnt_recall_1/num_samples :.3f}")
+    print(f"\nRecall@1: {cnt_recall_1/num_samples :.3f}")
     with open(os.path.join(args.output_folder, "selection_metric.txt"), "w") as out_f:
-        out_f.write(f"recall@1 = {cnt_recall_1/num_samples :.3f}\n")
+        out_f.write(f"Recall@1: {cnt_recall_1/num_samples :.3f}\n")
 
     data = json.load(open(args.data_file))
     k_idx = 0

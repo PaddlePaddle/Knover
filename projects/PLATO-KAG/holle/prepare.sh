@@ -27,23 +27,24 @@ function download_tar() {
 }
 
 # download models
-# pre-trained model
+mkdir -p models
+# pre-trained models
 # 24L NSP
+download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/24L_NSP.tar models/24L_NSP
 # 24L SU
+download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/24L_SU.tar models/24L_SU
 
 # fine-tuned model
+download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/holle/24L_PLATO_KAG.tar models/24L_PLATO_KAG
 
 # download dataset
-# our provided dataset is preprocessed to get similar data format with wow
+# our provided dataset has been preprocessed to get similar data format with wow
 # we use the preprocessing script from skt (https://github.com/bckim92/sequential-knowledge-transformer/blob/master/data/holle.py)
-
-
+download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/holle/data.tar data
 
 # change to the root directory of Knover
 cd ../../..
-DATA_PATH="$PWD/projects/PLATO-KAG/holle/data"
 MODEL_PATH="$PWD/projects/PLATO-KAG/holle/models"
-OUTPUT_PATH="$PWD/projects/PLATO-KAG/holle/output"
 
 bash ./projects/PLATO-KAG/holle/init_dual_params.sh $MODEL_PATH/24L_NSP $MODEL_PATH/24L_SU $MODEL_PATH/24L_KAG_INIT
 

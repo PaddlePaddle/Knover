@@ -70,5 +70,4 @@ import knover.models.classifier
 import knover.models.nsp_model
 import knover.models.plato
 import knover.models.plato_kag
-import knover.models.sop_model
 import knover.models.unified_transformer

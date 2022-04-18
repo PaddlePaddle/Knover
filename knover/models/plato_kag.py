@@ -80,13 +80,6 @@ class PlatoKAG(UnifiedTransformer):
                 name="dual_knowledge_role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
             feed_dict["single_role_ids"] = layers.data(
                 name="single_role_ids", shape=[-1, self.max_knowledge_num, self.max_seq_len, 1], dtype="int64")
-        if self.use_turn:
-            feed_dict["dual_src_turn_ids"] = layers.data(
-                name="dual_src_turn_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-            feed_dict["dual_knowledge_turn_ids"] = layers.data(
-                name="dual_knowledge_turn_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-            feed_dict["single_turn_ids"] = layers.data(
-                name="single_turn_ids", shape=[-1, self.max_knowledge_num, self.max_seq_len, 1], dtype="int64")
 
         feed_dict["single_attention_mask"] = layers.data(
             name="single_attention_mask",
@@ -127,9 +120,6 @@ class PlatoKAG(UnifiedTransformer):
         if self.use_role:
             feed_dict["role_ids"] = layers.data(
                 name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        if self.use_turn:
-            feed_dict["turn_ids"] = layers.data(
-                name="turn_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
 
         feed_dict["attention_mask"] = layers.data(
             name="attention_mask", shape=[-1, self.max_seq_len, self.max_seq_len], dtype=self.dtype)
@@ -216,7 +206,6 @@ class PlatoKAG(UnifiedTransformer):
             type_ids=inputs["dual_knowledge_type_ids"],
             pos_ids=inputs["dual_knowledge_pos_ids"],
             role_ids=inputs.get("dual_knowledge_role_ids", None),
-            turn_ids=inputs.get("dual_knowledge_turn_ids", None),
             generation_mask=inputs["dual_knowledge_attention_mask"],
             name="dual_encoder"
         )
@@ -226,7 +215,6 @@ class PlatoKAG(UnifiedTransformer):
             type_ids=inputs["dual_src_type_ids"],
             pos_ids=inputs["dual_src_pos_ids"],
             role_ids=inputs.get("dual_src_role_ids", None),
-            turn_ids=inputs.get("dual_src_turn_ids", None),
             generation_mask=inputs["dual_src_attention_mask"],
             name="dual_encoder"
         )
@@ -280,9 +268,6 @@ class PlatoKAG(UnifiedTransformer):
         selected_role_ids = None
         if inputs.get("single_role_ids", None):
             selected_role_ids = layers.gather_nd(inputs["single_role_ids"], nd_idx)
-        selected_turn_ids = None
-        if inputs.get("single_turn_ids", None):
-            selected_turn_ids = layers.gather_nd(inputs["single_turn_ids"], nd_idx)
 
         selected_attention_mask = layers.gather_nd(inputs["single_attention_mask"], nd_idx)
 
@@ -292,7 +277,6 @@ class PlatoKAG(UnifiedTransformer):
             type_ids=selected_type_ids,
             pos_ids=selected_pos_ids,
             role_ids=selected_role_ids,
-            turn_ids=selected_turn_ids,
             generation_mask=selected_attention_mask
         )
 
@@ -317,7 +301,6 @@ class PlatoKAG(UnifiedTransformer):
             type_ids=inputs["type_ids"],
             pos_ids=inputs["pos_ids"],
             role_ids=inputs.get("role_ids", None),
-            turn_ids=inputs.get("turn_ids", None),
             generation_mask=inputs["attention_mask"],
             name="dual_encoder"
         )

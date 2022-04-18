@@ -76,4 +76,3 @@ if [[ $exit_code != 0 ]]; then
 fi
 
 exit $exit_code
-

@@ -49,5 +49,3 @@ python ./projects/PLATO-KAG/holle/eval_multi_ref_generation.py \
     --eval_output_file ${OUTPUT_PATH}/test/eval_multi/output/inference_output.txt \
     --gen_output_file ${OUTPUT_PATH}/test/generation/output/inference_output.txt \
     --infer_input_file ${OUTPUT_PATH}/test/selection/output/multi_ref_infer_data.tsv
-
-

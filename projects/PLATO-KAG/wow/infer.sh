@@ -41,5 +41,3 @@ python ./projects/PLATO-KAG/tools/generation_metrics.py \
     --refer_file $OUTPUT_PATH/${PHASE}_${SPLIT}/selection/output/infer_data.tsv \
     --hypo_file ${OUTPUT_PATH}/${PHASE}_${SPLIT}/generation/output/inference_output.txt \
     --include_topic
-
-

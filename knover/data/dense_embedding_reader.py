@@ -43,8 +43,6 @@ class DenseEmbeddingReader(DialogReader):
         self.fields = ["token_ids", "type_ids", "pos_ids"]
         if args.use_role:
             self.fields.append("role_ids")
-        if args.use_turn:
-            self.fields.append("turn_ids")
         self.num_numerical_fields = len(self.fields)
         self.fields += ["data_id"]
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
@@ -75,8 +73,6 @@ class DenseEmbeddingReader(DialogReader):
         }
         if self.use_role:
             field_values["role_ids"] = [0] * len(topic_token_ids)
-        if self.use_turn:
-            field_values["turn_ids"] = [0] * len(topic_token_ids)
 
         return field_values
 
@@ -127,8 +123,6 @@ class DenseEmbeddingReader(DialogReader):
         batch_pos_ids = [record.pos_ids for record in batch_records]
         if self.use_role:
             batch_role_ids = [record.role_ids for record in batch_records]
-        if self.use_turn:
-            batch_turn_ids = [record.turn_ids for record in batch_records]
 
         batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
         batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=self.pad_id)
@@ -136,8 +130,6 @@ class DenseEmbeddingReader(DialogReader):
 
         if self.use_role:
             batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=self.pad_id)
-        if self.use_turn:
-            batch["turn_ids"] = pad_batch_data(batch_turn_ids, pad_id=self.pad_id)
 
         batch["attention_mask"] = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
 

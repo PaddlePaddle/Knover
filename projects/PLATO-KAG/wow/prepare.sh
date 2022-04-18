@@ -45,8 +45,3 @@ cd ../../..
 MODEL_PATH="$PWD/projects/PLATO-KAG/wow/models"
 
 bash ./projects/PLATO-KAG/wow/init_dual_params.sh $MODEL_PATH/24L_NSP $MODEL_PATH/24L_SU $MODEL_PATH/24L_KAG_INIT
-
-
-
-
-

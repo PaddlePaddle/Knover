@@ -88,8 +88,6 @@ class KAGReader(DialogReader):
         }
         if self.use_role:
             field_values["role_ids"] = [0] * len(topic_token_ids)
-        if self.use_turn:
-            field_values["turn_ids"] = [0] * len(topic_token_ids)
 
         return field_values
 
@@ -127,8 +125,6 @@ class KAGReader(DialogReader):
             }
             if self.use_role:
                 field_values["role_ids"] = [0] * len(k_token_ids)
-            if self.use_turn:
-                field_values["turn_ids"] = [0] * len(k_token_ids)
 
             knowledge_list.append(field_values)
 
@@ -142,8 +138,6 @@ class KAGReader(DialogReader):
             }
             if self.use_role:
                 pad_k_item["role_ids"] = [self.pad_id]
-            if self.use_turn:
-                pad_k_item["turn_ids"] = [self.pad_id]
 
             knowledge_list = knowledge_list + [pad_k_item] * (self.max_knowledge_num - k_num)
         else:
@@ -442,10 +436,6 @@ class KAGReader(DialogReader):
             dual_src_batch_role_ids = [record.dual_src_role_ids for record in batch_records]
             dual_knowledge_batch_role_ids = self._get_batch_knowledge_ids(batch_records, "role_ids")
             single_batch_role_ids = self._get_batch_single_item(batch_records, "role_ids")
-        if self.use_turn:
-            dual_src_batch_turn_ids = [record.dual_src_turn_ids for record in batch_records]
-            dual_knowledge_batch_turn_ids = self._get_batch_knowledge_ids(batch_records, "turn_ids")
-            single_batch_turn_ids = self._get_batch_single_item(batch_records, "turn_ids")
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch_tgt_mask_pos = [record.tgt_mask_pos for record in batch_records]
@@ -475,8 +465,6 @@ class KAGReader(DialogReader):
         batch["single_pos_ids"] = pad_batch_data(single_batch_pos_ids, pad_id=self.pad_id)
         if self.use_role:
             batch["single_role_ids"] = pad_batch_data(single_batch_role_ids, pad_id=self.pad_id)
-        if self.use_turn:
-            batch["single_turn_ids"] = pad_batch_data(single_batch_turn_ids, pad_id=self.pad_id)
 
         max_len = to_optimized_size(max(map(len, single_batch_token_ids)))
         batch["tgt_label"] = batch["tgt_label"].reshape([-1, self.max_knowledge_num, given_len, 1])
@@ -486,8 +474,6 @@ class KAGReader(DialogReader):
         batch["single_pos_ids"] = batch["single_pos_ids"].reshape([-1, self.max_knowledge_num, max_len, 1])
         if self.use_role:
             batch["single_role_ids"] = batch["single_role_ids"].reshape([-1, self.max_knowledge_num, max_len, 1])
-        if self.use_turn:
-            batch["single_turn_ids"] = batch["single_turn_ids"].reshape([-1, self.max_knowledge_num, max_len, 1])
 
         # for dual
         batch["dual_src_token_ids"] = pad_batch_data(dual_src_batch_token_ids, pad_id=self.pad_id)
@@ -499,9 +485,6 @@ class KAGReader(DialogReader):
         if self.use_role:
             batch["dual_src_role_ids"] = pad_batch_data(dual_src_batch_role_ids, pad_id=self.pad_id)
             batch["dual_knowledge_role_ids"] = pad_batch_data(dual_knowledge_batch_role_ids, pad_id=self.pad_id)
-        if self.use_turn:
-            batch["dual_src_turn_ids"] = pad_batch_data(dual_src_batch_turn_ids, pad_id=self.pad_id)
-            batch["dual_knowledge_turn_ids"] = pad_batch_data(dual_knowledge_batch_turn_ids, pad_id=self.pad_id)
         batch["dual_src_attention_mask"] = self._gen_self_attn_mask(dual_src_batch_token_ids, is_unidirectional=False)
         batch["dual_knowledge_attention_mask"] = self._gen_self_attn_mask(dual_knowledge_batch_token_ids, is_unidirectional=False)
 

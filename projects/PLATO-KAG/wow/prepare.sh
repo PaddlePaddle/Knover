@@ -29,19 +29,10 @@ function download_tar() {
 # download models
 mkdir -p models
 # pre-trained models
-# 24L NSP
-download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/24L_NSP.tar models/24L_NSP
-# 24L SU
-download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/24L_SU.tar models/24L_SU
+download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/wow/24L_KAG_INIT.tar models/24L_KAG_INIT
 
 # fine-tuned model
 download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/wow/24L_PLATO_KAG.tar models/24L_PLATO_KAG
 
 # download dataset
 download_tar https://dialogue.bj.bcebos.com/Knover/projects/PLATO-KAG/wow/data.tar data
-
-# change to the root directory of Knover
-cd ../../..
-MODEL_PATH="$PWD/projects/PLATO-KAG/wow/models"
-
-bash ./projects/PLATO-KAG/wow/init_dual_params.sh $MODEL_PATH/24L_NSP $MODEL_PATH/24L_SU $MODEL_PATH/24L_KAG_INIT

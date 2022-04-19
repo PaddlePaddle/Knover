@@ -370,7 +370,6 @@ class BeamSearch(Generator):
 
         topk_scores = paddle.reshape(topk_scores, [-1, 1])
         pred = paddle.reshape(pred, [-1])
-        pred = paddle.cast(pred, "int")
         pred = paddle.unsqueeze(pred, [1])
 
         parent_idx = paddle.unsqueeze(paddle.arange(bsz, dtype="int64"), [1]) * num_beams + \

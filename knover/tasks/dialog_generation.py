@@ -388,7 +388,7 @@ def get_nsp_score_batch(nsp_predictor, predictions):
             args.batch_size *= args.num_samples
         if args.latent_type_size:
             args.batch_size *= args.latent_type_size
-    args.tokenized_input = True
+    args.data_format = "tokenized"
     # TODO: check knowledge
     args.max_knowledge_len = 0
     args.use_mlm = False

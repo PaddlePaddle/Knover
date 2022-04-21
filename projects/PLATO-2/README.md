@@ -12,13 +12,13 @@ To build a high-quality open-domain chatbot, we introduce the effective training
 ## Pre-trained dialogue generation model
 A novel pre-training model for dialogue generation is introduced in this work, incorporated with latent discrete variables for one-to-many relationship modeling.
 
-* PLATO-2, 24L (310M params), EN: [Model](https://dialogue.bj.bcebos.com/Knover/PLATO-2/24L.tar)
-* PLATO-2, 32L (1.6B params), EN: [Model](https://dialogue.bj.bcebos.com/Knover/PLATO-2/32L.tar)
+* PLATO-2, 24L (310M params), EN: [Model](https://dialogue.bj.bcebos.com/Knover/projects/PLATO-2/24L.tar)
+* PLATO-2, 32L (1.6B params), EN: [Model](https://dialogue.bj.bcebos.com/Knover/projects/PLATO-2/32L.tar)
 
 ```bash
 MODEL_SIZE=24L # 24L / 32L
 cd /path/to/Knover
-wget https://baidu-nlp.bj.bcebos.com/PLATO-2/${MODEL_SIZE}.tar
+wget https://dialogue.bj.bcebos.com/Knover/projects/PLATO-2/${MODEL_SIZE}.tar
 tar xf ${MODEL_SIZE}.tar
 ```
 

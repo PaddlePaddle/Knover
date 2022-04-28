@@ -115,11 +115,7 @@ class Model(nn.Layer, metaclass=ModelMeta):
         Returns:
             inputs: A dict mapping keys to corresponding Tensors.
         """
-        if isinstance(inputs, dict):
-            return {
-                k: v if paddle.is_tensor() else paddle.Tensor(v)
-                for k, v in inputs.items()
-            }
+        inputs = [v if paddle.is_tensor(v) else paddle.Tensor(v) for v in inputs]
         if is_infer:
             return dict(zip(self.infer_feed_names, inputs))
         else:
@@ -500,6 +496,9 @@ class ModelInterface(object):
             predictions: A dict mapping keys to corresponding predictions (numpy arrays).
         """
         with paddle.no_grad():
+            if isinstance(inputs, dict):
+                self._model.infer_feed_names = list(inputs.keys())
+                inputs = list(inputs.values())
             if self._is_distributed:
                 self._dist_model.eval()
                 predictions = self._dist_model(*inputs, mode="infer")

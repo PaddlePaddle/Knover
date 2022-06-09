@@ -87,7 +87,6 @@ class Model(ABC):
         self.args = args
 
         self.place = place
-        self.exe = fluid.Executor(place)
 
         self.init_checkpoint = args.init_checkpoint
         self.init_pretraining_params = args.init_pretraining_params
@@ -139,6 +138,7 @@ class Model(ABC):
             if self.use_amp:
                 print("[WARN] Cannot support AMP in non-distributed mode.")
 
+        self.exe = fluid.Executor(place)
         # model mode
         self.run_infer = args.get("run_infer", False)
         self.batch_size = args.get("batch_size", 1)
@@ -231,15 +231,11 @@ class Model(ABC):
                         self._set_checkpoints(outputs["checkpoints"])
 
                     metrics = self.get_metrics(inputs, outputs)
-                    if self.use_sharding:
-                        scheduled_lr = self.optimize(metrics)
+                    scheduled_lr = self.optimize(metrics)
 
                     # build evaluation program
                     self.eval_program = self.train_program.clone(for_test=True)
                     self.eval_fetch_dict = dict(**metrics)
-
-                    if not self.use_sharding:
-                        scheduled_lr = self.optimize(metrics)
 
                     metrics["scheduled_lr"] = scheduled_lr
                     if self.is_distributed and self.use_amp:

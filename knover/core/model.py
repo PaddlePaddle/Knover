@@ -538,7 +538,7 @@ class ModelInterface(object):
         """
         params_path = model_path + ".pdparams"
         print(f"Saving parameters into {params_path}.")
-        paddle.save(self._dist_model.state_dict(), params_path)
+        paddle.save(self._model.state_dict(), params_path)
         if is_checkpoint:
             opt_path = model_path + ".pdopt"
             print(f"Saving optimizer state into {opt_path}.")
@@ -559,11 +559,15 @@ class ModelInterface(object):
         params_state_dict = paddle.load(params_path)
         self._model.set_state_dict(params_state_dict)
         if is_checkpoint:
-            opt_path = model_path + "pdopt"
+            opt_path = model_path + ".pdopt"
             assert os.path.exists(opt_path), f"opt_path: [{opt_path}] cannot be found."
             print(f"Loading optimizer state from {opt_path}.")
-            opt_state_dict = paddle.load(model_path + "pdopt")
+            opt_state_dict = paddle.load(opt_path)
             self._optimizer.set_state_dict(opt_state_dict)
+            if "LR_Scheduler" in opt_state_dict:
+                self._model.args.start_step = opt_state_dict["LR_Scheduler"]["last_epoch"]
+            else:
+                print("[WARN] Cannot determinate current start_step from the checkpoint.")
         print("Loading has done!")
         return
 

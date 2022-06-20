@@ -115,11 +115,7 @@ class Model(nn.Layer, metaclass=ModelMeta):
         Returns:
             inputs: A dict mapping keys to corresponding Tensors.
         """
-        if isinstance(inputs, dict):
-            return {
-                k: v if paddle.is_tensor() else paddle.Tensor(v)
-                for k, v in inputs.items()
-            }
+        inputs = [v if paddle.is_tensor(v) else paddle.Tensor(v) for v in inputs]
         if is_infer:
             return dict(zip(self.infer_feed_names, inputs))
         else:
@@ -500,6 +496,9 @@ class ModelInterface(object):
             predictions: A dict mapping keys to corresponding predictions (numpy arrays).
         """
         with paddle.no_grad():
+            if isinstance(inputs, dict):
+                self._model.infer_feed_names = list(inputs.keys())
+                inputs = list(inputs.values())
             if self._is_distributed:
                 self._dist_model.eval()
                 predictions = self._dist_model(*inputs, mode="infer")
@@ -539,7 +538,7 @@ class ModelInterface(object):
         """
         params_path = model_path + ".pdparams"
         print(f"Saving parameters into {params_path}.")
-        paddle.save(self._dist_model.state_dict(), params_path)
+        paddle.save(self._model.state_dict(), params_path)
         if is_checkpoint:
             opt_path = model_path + ".pdopt"
             print(f"Saving optimizer state into {opt_path}.")
@@ -560,11 +559,15 @@ class ModelInterface(object):
         params_state_dict = paddle.load(params_path)
         self._model.set_state_dict(params_state_dict)
         if is_checkpoint:
-            opt_path = model_path + "pdopt"
+            opt_path = model_path + ".pdopt"
             assert os.path.exists(opt_path), f"opt_path: [{opt_path}] cannot be found."
             print(f"Loading optimizer state from {opt_path}.")
-            opt_state_dict = paddle.load(model_path + "pdopt")
+            opt_state_dict = paddle.load(opt_path)
             self._optimizer.set_state_dict(opt_state_dict)
+            if "LR_Scheduler" in opt_state_dict:
+                self._model.args.start_step = opt_state_dict["LR_Scheduler"]["last_epoch"]
+            else:
+                print("[WARN] Cannot determinate current start_step from the checkpoint.")
         print("Loading has done!")
         return
 

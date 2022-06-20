@@ -27,3 +27,8 @@ For example:
 |Q_ACC | Q_F1 | Q_BLEU1/2 | D_F1 | D_BLEU1/2 | DISTINCT1/2 | 
 |---|---|---|---|---|---|
 |0.553 | 0.218 | 0.159/0.155 | 0.189 | 0.137/0.084 | 0.158/0.557 | 
+
+## Human Evaluation
+
+* server.py : A deployed service sample is provided. Ensure that the service API can be accessed through the public network
+* check_server.py : You can use this script to verify that the service is available

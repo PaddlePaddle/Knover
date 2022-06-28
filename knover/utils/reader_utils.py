@@ -62,11 +62,12 @@ def mask(batch_tokens,
                 label_idx.extend([sent_index, len(sent) - 1 + num_aux_token])
                 if labels[sent_index] == 0:
                     need_cal = False
-            mask_label.extend(sent[tgt_start + 1:])
-            mask_idx.extend([
-                [sent_index, i + num_aux_token]
-                for i in range(tgt_start, len(sent) - 1)
-            ])
+            if need_cal:
+                mask_label.extend(sent[tgt_start + 1:])
+                mask_idx.extend([
+                    [sent_index, i + num_aux_token]
+                    for i in range(tgt_start, len(sent) - 1)
+                ])
         mask_label = np.array(mask_label).astype("int64").reshape([-1, 1])
         mask_idx = np.array(mask_idx).astype("int64").reshape([-1, 2])
         return_list = [mask_label, mask_idx]

@@ -7,7 +7,7 @@ python -u \
     --in_file ${OUTPUT_PATH}/subtask2_${DATASET_TYPE}.output.json \
     --out_file ${DATA_PATH}/subtask3_${DATASET_TYPE}.tsv \
     --log_file ${DATA_PATH}/${DATASET_TYPE}_minimal_logs.json \
-    --knowledge_file ${DATA_PATH}/minimal_knowledge.json
+    --knowledge_file ${DATA_PATH}/${DATASET_TYPE}_minimal_knowledge.json \
 
 # run inference
 ./scripts/local/job.sh ./projects/DSTC10-Track2/task2/subtask3/infer.conf

@@ -64,9 +64,13 @@ class ClassificationReader(DialogReader):
         record = self.Record(**field_values)
         return record
 
-    def _read_numerical_file(self, fp, delimiter=";"):
-        # Classification task does not support `numerical` data_format now.
-        raise NotImplementedError
+    def _read_numerical_file(self, fp, phase, is_infer, delimiter=";"):
+        """Read a file which contains numerical data and yield records."""
+        if is_infer:
+            return super(ClassificationReader, self)._read_numerical_file(fp, phase, is_infer, delimiter)
+        else:
+            # Classification task does not support `numerical` data_format during training now.
+            raise NotImplementedError
 
     def _pad_batch_records(self, batch_records, is_infer, phase=None):
         """Padding a batch of records and construct model's inputs."""

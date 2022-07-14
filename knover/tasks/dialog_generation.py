@@ -19,6 +19,7 @@ import math
 from knover.core.task import Task
 from knover.data.dialog_reader import DialogReader
 from knover.data.plato_reader import PlatoReader
+from knover.data.diamante_reader import DiamanteReader
 from knover.tasks import register_task
 from knover.utils.args import str2bool
 from knover.utils.inference_utils import create_predictor
@@ -52,6 +53,8 @@ class DialogGeneration(Task):
         args, _ = parser.parse_known_args()
         if args.model == "Plato":
             PlatoReader.add_cmdline_args(parser)
+        elif args.model == "Diamante":
+            DiamanteReader.add_cmdline_args(parser)
         else:
             DialogReader.add_cmdline_args(parser)
         return group
@@ -66,6 +69,8 @@ class DialogGeneration(Task):
         args.reserve_example = True
         if args.model == "Plato":
             self.reader = PlatoReader(args)
+        elif args.model == "Diamante":
+            self.reader = DiamanteReader(args)
         else:
             self.reader = DialogReader(args)
 
@@ -75,6 +80,8 @@ class DialogGeneration(Task):
                 args.get("is_distributed", False))
         else:
             self.nsp_predictor = None
+
+        self.debug_mode = True
 
         self.ranking_score = args.ranking_score
         self.max_dec_len = args.max_dec_len
@@ -170,6 +177,20 @@ class DialogGeneration(Task):
 
         The score is calculated by perplexity (PPL).
         """
+        if self.ranking_score == "ranking_score":
+            return [
+                {
+                    "data_id": data_id.tolist()[0],
+                    "lm_loss": float(lm_loss),
+                    "ppl": math.exp(lm_loss / tokens_num),
+                    "tokens_num": int(tokens_num),
+                    "ranking_score": ranking_score.tolist()[0]
+                }
+                for data_id, lm_loss, tokens_num, ranking_score in zip(
+                    predictions["data_id"], predictions["lm_loss"], predictions["tokens_num"], predictions["ranking_score"]
+                )
+            ]
+
         return [
             {
                 "data_id": data_id.tolist()[0],

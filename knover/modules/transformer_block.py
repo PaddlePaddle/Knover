@@ -44,6 +44,21 @@ def _build_linear_row_parallel(x, n_in, n_out, name, initializer, num_partitions
         bias_attr=name + ".b_0")
 
 
+def gen_cache(x, d_key, d_value, n_head, topo=None):
+    num_splits = topo.mp_info.size if topo is not None else 1
+    k = layers.fill_constant_batch_size_like(
+        input=x,
+        shape=[-1, 0, d_key * n_head // num_splits],
+        dtype="float32",
+        value=0)
+    v = layers.fill_constant_batch_size_like(
+        input=x,
+        shape=[-1, 0, d_value * n_head // num_splits],
+        dtype="float32",
+        value=0)
+    return k, v
+
+
 def multi_head_attention(queries,
                          keys,
                          values,
@@ -195,10 +210,10 @@ def multi_head_attention(queries,
             layers.assign(k, cache["k"])
             layers.assign(v, cache["v"])
         else:
-            tmp_k = layers.concat([select_k, k[:, :1]], axis=1)
-            tmp_v = layers.concat([select_v, v[:, :1]], axis=1)
-            layers.assign(tmp_k, cache["k"])
-            layers.assign(tmp_v, cache["v"])
+            # Cannot support static cache now.
+            assert False
+            layers.assign(select_k, cache["k"])
+            layers.assign(select_v, cache["v"])
             k = layers.concat([select_k, k], axis=1)
             v = layers.concat([select_v, v], axis=1)
 
@@ -307,6 +322,9 @@ def pre_post_process_layer(prev_out,
         if cmd == "a":  # add residual connection
             out = out + prev_out if prev_out else out
         elif cmd == "n":  # add layer normalization
+            out_dtype = out.dtype
+            if out_dtype == paddle.float16:
+                out = layers.cast(out, "float32")
             out = layers.layer_norm(
                 out,
                 begin_norm_axis=len(out.shape) - 1,
@@ -317,6 +335,8 @@ def pre_post_process_layer(prev_out,
                     name=name + "_layer_norm_bias",
                     initializer=fluid.initializer.Constant(0.)),
                 epsilon=epsilon)
+            if out_dtype == paddle.float16:
+                out = layers.cast(out, "float16")
         elif cmd == "d":  # add dropout
             if dropout_rate:
                 out = layers.dropout(

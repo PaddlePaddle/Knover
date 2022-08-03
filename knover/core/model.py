@@ -217,7 +217,8 @@ class Model(ABC):
         self.startup_program = fluid.Program()
 
         if self.run_infer:
-            self.dtype = "float32"
+            self.dtype = "float16" if self.use_amp else "float32"
+
             if self.is_distributed and self.use_sharding:
                 init_parallel_env()
             # build inference program

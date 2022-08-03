@@ -152,6 +152,8 @@ class Generator(object):
             model_input, pre_ids, pre_scores = model._prepare_timestep_input(state, step_idx)
             dec_out, _ = model._generation_network(**model_input)
             logits = model._calc_logits(dec_out)
+            if model.dtype == "float16":
+                logits = layers.cast(logits, "float32")
 
             logits = layers.elementwise_add(logits, token_penalty, axis=1)
 
@@ -173,6 +175,8 @@ class Generator(object):
 
             # get probs
             probs = layers.softmax(logits / self.temperature)
+            if model.dtype == "float16":
+                probs = layers.cast(probs, "float32")
 
             if self.decoding_strategy == "beam_search":
                 topk_scores, topk_indices = layers.topk(
@@ -182,9 +186,8 @@ class Generator(object):
                     sampling_ids = ops.sampling_id(probs)
                 elif self.decoding_strategy.startswith("topk_sampling"):
                     topk_probs, _ = layers.topk(input=probs, k=self.topk)
-                    ge_cond = layers.cast(
-                        layers.greater_equal(probs, topk_probs[:, -1:]),
-                        "float32")
+                    ge_cond = layers.greater_equal(probs, topk_probs[:, -1:])
+                    ge_cond = layers.cast(ge_cond, probs.dtype)
                     old_probs = probs
                     probs = probs * ge_cond / layers.reduce_sum(topk_probs, dim=-1, keep_dim=True)
                     sampling_ids = ops.sampling_id(probs)
@@ -192,17 +195,14 @@ class Generator(object):
                 elif self.decoding_strategy.startswith("topp_sampling"):
                     sorted_probs, sorted_idx = layers.argsort(probs, descending=True)
                     cum_sorted_probs = layers.cumsum(sorted_probs, axis=1, exclusive=True)
-                    lt_cond = layers.cast(
-                        layers.less_than(
-                            cum_sorted_probs,
-                            layers.fill_constant_batch_size_like(
-                                cum_sorted_probs,
-                                cum_sorted_probs.shape,
-                                cum_sorted_probs.dtype,
-                                self.topp)
-                        ),
-                        "float32"
-                    )
+                    lhs = cum_sorted_probs
+                    rhs = layers.fill_constant_batch_size_like(
+                        cum_sorted_probs,
+                        cum_sorted_probs.shape,
+                        cum_sorted_probs.dtype,
+                        self.topp)
+                    lt_cond = layers.less_than(lhs, rhs)
+                    lt_cond = layers.cast(lt_cond, probs.dtype)
                     old_probs = probs
                     candidate_probs = sorted_probs * lt_cond
                     probs = candidate_probs / layers.reduce_sum(candidate_probs, dim=-1, keep_dim=True)

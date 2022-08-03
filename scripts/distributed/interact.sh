@@ -50,6 +50,16 @@ if [[ $infer_args =~ "--use_sharding true" ]]; then
     init_params="${init_params}-mp${MP_DEGREE}"
 fi
 
+if [[ $infer_args =~ "--use_amp true" ]]; then
+    if [[ ! -d ${init_params}-fp16 ]]; then
+        python ./knover/tools/convert_checkpoint.py \
+            --param_path ${init_params} \
+            --save_path ${init_params}-fp16 \
+            --convert_type fp16
+    fi
+    init_params="${init_params}-fp16"
+fi
+
 fleetrun \
     ${distributed_args:-} \
     ./knover/scripts/interact.py \

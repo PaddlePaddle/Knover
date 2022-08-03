@@ -19,7 +19,7 @@ import paddle.fluid.layers as layers
 
 from knover.models import register_model
 from knover.core.model import Model
-from knover.modules.transformer_block import encoder, pre_process_layer
+from knover.modules.transformer_block import encoder, gen_cache, pre_process_layer
 from knover.modules.generator import Generator
 from knover.utils import str2bool, repeat_array_or_tensor, slice_array_or_tensor
 
@@ -168,12 +168,19 @@ class UnifiedTransformer(Model):
 
         # generate n-head self-attention mask
         if isinstance(input_mask, (tuple, list)):
+            if self.dtype == "float16":
+                input_mask = (
+                    layers.cast(mask, self.dtype)
+                    for mask in input_mask
+                )
             attn_bias = (
                 layers.unsqueeze(
                     layers.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False), 1)
                 for mask in input_mask
             )
         else:
+            if self.dtype == "float16":
+                input_mask = layers.cast(input_mask, self.dtype)
             attn_bias = layers.unsqueeze(
                 layers.scale(x=input_mask, scale=1e4, bias=-1.0, bias_after_scale=False), 1)
 
@@ -389,10 +396,10 @@ class UnifiedTransformer(Model):
                     name="tgt_ids", shape=[-1, 1, 1], dtype="int64")
                 feed_dict["tgt_pos"] = layers.data(
                     name="tgt_pos", shape=[-1, 1, 1], dtype="int64")
-                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype="float32")
+                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype=self.dtype)
                 feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
                 feed_dict["tgt_generation_mask"] = layers.data(
-                    name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype="float32")
+                    name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype=self.dtype)
             else:
                 feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
                 feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
@@ -406,21 +413,14 @@ class UnifiedTransformer(Model):
     def forward(self, inputs, is_infer=False):
         """Run model main forward."""
         outputs = {}
-        if is_infer and self.do_generation:
-            self.generation_caches = [{
-                "k":
-                layers.fill_constant_batch_size_like(
-                    input=inputs["token_ids"],
-                    shape=[-1, 0, self.d_key * self.n_head],
-                    dtype="float32",
-                    value=0),
-                "v":
-                layers.fill_constant_batch_size_like(
-                    input=inputs["token_ids"],
-                    shape=[-1, 0, self.d_value * self.n_head],
-                    dtype="float32",
-                    value=0),
-            } for i in range(self.n_layer)]
+        if is_infer:
+            self.generation_caches = []
+            for i in range(self.n_layer):
+                k, v = gen_cache(inputs["token_ids"], self.d_key, self.d_value, self.n_head, self.topo)
+                if self.dtype == "float16":
+                    k = layers.cast(k, self.dtype)
+                    v = layers.cast(v, self.dtype)
+                self.generation_caches.append({"k": k, "v": v})
         else:
             self.generation_caches = None
 
@@ -501,6 +501,8 @@ class UnifiedTransformer(Model):
         state["tgt_ids"] = layers.array_write(layers.reshape(inputs["tgt_ids"], [-1, 1]), step_idx)
         state["tgt_pos"] = inputs["tgt_pos"]
         init_score = inputs["init_score"]
+        if self.dtype == "float16":
+            init_score = layers.cast(init_score, "float32")
         state["scores"] = layers.array_write(init_score, step_idx)
         state["tgt_generation_mask"] = inputs["tgt_generation_mask"]
         state["is_finished"] = layers.fill_constant_batch_size_like(init_score, [-1, 1], "float32", 0)
@@ -529,6 +531,8 @@ class UnifiedTransformer(Model):
         if "parent_idx" in state:
             tgt_generation_mask = layers.gather(tgt_generation_mask, state["parent_idx"])
         append_mask = layers.unsqueeze(1 - state["is_finished"], [2])
+        if self.dtype == "float16":
+            append_mask = layers.cast(append_mask, self.dtype)
         tgt_generation_mask = layers.concat([tgt_generation_mask, append_mask], axis=2)
 
         model_input["generation_mask"] = pre_mask = tgt_generation_mask

@@ -62,88 +62,78 @@ def sampling_id(probs):
     return sampling_ids
 
 
-_ngram = None
-_bos_id = None
-_eos_id = None
-ngram_stat_list = None
-cur_ngram_list = None
+class NGramBlockingProcessor(object):
+    """N-gram blocking strategy."""
 
+    def __init__(self, ngram, bos_id, eos_id):
+        self.ngram = ngram
+        self.bos_id = bos_id
+        self.eos_id = eos_id
 
-def _init_ngram_blocking(token_ids):
-    token_ids = np.array(token_ids)
-    global ngram_stat_list, cur_ngram_list
-    ngram_stat_list = [defaultdict(set) for _ in range(token_ids.shape[0])]
-    cur_ngram_list = [[] for _ in range(token_ids.shape[0])]
-    for ids, ngram_state in zip(token_ids[:, :, 0], ngram_stat_list):
-        last_idx = rindex(ids.tolist(), _eos_id)
-        cur_ids = []
-        for i in range(last_idx + 1):
-            if ids[i] in [_bos_id, _eos_id]:
+    def init(self, token_ids):
+        """Initalize N-gram blocking strategy related data."""
+        def __wrapper__(token_ids):
+            token_ids = np.array(token_ids)
+            self.ngram_stat_list = [defaultdict(set) for _ in range(token_ids.shape[0])]
+            self.cur_ngram_list = [[] for _ in range(token_ids.shape[0])]
+            for ids, ngram_state in zip(token_ids[:, :, 0], self.ngram_stat_list):
+                last_idx = rindex(ids.tolist(), self.eos_id)
                 cur_ids = []
-            else:
-                cur_ids.append(ids[i])
-            if len(cur_ids) >= _ngram:
-                k = tuple(cur_ids[-_ngram:-1])
-                ngram_state[k].add(ids[i])
+                for i in range(last_idx + 1):
+                    if ids[i] in [self.bos_id, self.eos_id]:
+                        cur_ids = []
+                    else:
+                        cur_ids.append(ids[i])
+                    if len(cur_ids) >= self.ngram:
+                        k = tuple(cur_ids[-self.ngram:-1])
+                        ngram_state[k].add(ids[i])
 
+        static.py_func(func=__wrapper__, x=token_ids, out=None)
 
-def init_ngram_blocking(token_ids, ngram, bos_id, eos_id):
-    """Initalize N-gram blocking related data."""
-    global _ngram, _bos_id, _eos_id
-    _ngram, _bos_id, _eos_id = ngram, bos_id, eos_id
-    assert _ngram >= 1
-    static.py_func(func=_init_ngram_blocking, x=token_ids, out=None)
+    def apply(self, logits, is_finished):
+        """Post process logits by N-gram blocking strategy."""
+        def __wrapper__(logits, is_finished):
+            logits = np.array(logits) # shape: [B, V]
+            is_finished = np.array(is_finished) # shape: [B, 1]
+            for i in range(logits.shape[0]):
+                if is_finished[i]:
+                    continue
+                if len(self.cur_ngram_list[i]) >= self.ngram - 1:
+                    k = tuple(self.cur_ngram_list[i][-self.ngram + 1:])
+                    if k in self.ngram_stat_list[i]:
+                        for v in self.ngram_stat_list[i][k]:
+                            logits[i][v] -= 1e9
+            return logits
 
+        prog = static.default_main_program()
+        new_logits = prog.current_block().create_var(name="out_logits", dtype=logits.dtype, shape=logits.shape)
+        static.py_func(func=__wrapper__, x=(logits, is_finished), out=new_logits)
+        return new_logits
 
-def _apply_ngram_blocking(logits, is_finished):
-    logits = np.array(logits) # shape: [B, V]
-    is_finished = np.array(is_finished) # shape: [B, 1]
-    global ngram_stat_list, cur_ngram_list
-    for i in range(logits.shape[0]):
-        if is_finished[i]:
-            continue
-        if len(cur_ngram_list[i]) >= _ngram - 1:
-            k = tuple(cur_ngram_list[i][-_ngram + 1:])
-            if k in ngram_stat_list[i]:
-                for v in ngram_stat_list[i][k]:
-                    logits[i][v] -= 1e9
-    return logits
+    def update(self, pred, is_finished, parent_idx=None):
+        """Update N-gram blocking strategy related data."""
+        def __gather__(parent_idx):
+            parent_idx = np.array(parent_idx) # shape: [B]
+            new_ngram_stat_list, new_cur_ngram_list = [], []
+            for idx in parent_idx:
+                new_ngram_stat_list.append(copy.deepcopy(self.ngram_stat_list[idx]))
+                new_cur_ngram_list.append(copy.deepcopy(self.cur_ngram_list[idx]))
+            self.ngram_stat_list, self.cur_ngram_list = new_ngram_stat_list, new_cur_ngram_list
 
+        def __wrapper__(pred, is_finished):
+            pred = np.array(pred) # shape: [B, 1]
+            is_finished = np.array(is_finished) # shape: [B, 1]
+            assert(len(self.ngram_stat_list) == len(self.cur_ngram_list) == pred.shape[0] == is_finished.shape[0])
+            for ngram_stat, cur_ngram, x, flag in zip(
+                self.ngram_stat_list, self.cur_ngram_list, pred[:, 0], is_finished[:, 0]
+            ):
+                if flag:
+                    continue
+                cur_ngram.append(x)
+                if len(cur_ngram) >= self.ngram:
+                    k = tuple(cur_ngram[-self.ngram:-1])
+                    ngram_stat[k].add(x)
 
-def apply_ngram_blocking(logits, is_finished):
-    """Update logits by N-gram blocking strategy."""
-    prog = static.default_main_program()
-    new_logits = prog.current_block().create_var(name="out_logits", dtype=logits.dtype, shape=logits.shape)
-    static.py_func(func=_apply_ngram_blocking, x=(logits, is_finished), out=new_logits)
-    return new_logits
-
-
-def _gather_ngram_stat(parent_idx):
-    parent_idx = np.array(parent_idx) # shape: [B]
-    global ngram_stat_list, cur_ngram_list
-    new_ngram_stat_list, new_cur_ngram_list = [], []
-    for idx in parent_idx:
-        new_ngram_stat_list.append(copy.deepcopy(ngram_stat_list[idx]))
-        new_cur_ngram_list.append(copy.deepcopy(cur_ngram_list[idx]))
-    ngram_stat_list, cur_ngram_list = new_ngram_stat_list, new_cur_ngram_list
-
-
-def _update_ngram_blocking(pred, is_finished):
-    pred = np.array(pred) # shape: [B, 1]
-    is_finished = np.array(is_finished) # shape: [B, 1]
-    global ngram_stat_list, cur_ngram_list
-    assert(len(ngram_stat_list) == len(cur_ngram_list) == pred.shape[0] == is_finished.shape[0])
-    for ngram_stat, cur_ngram, x, flag in zip(ngram_stat_list, cur_ngram_list, pred[:, 0], is_finished[:, 0]):
-        if flag:
-            continue
-        cur_ngram.append(x)
-        if len(cur_ngram) >= _ngram:
-            k = tuple(cur_ngram[-_ngram:-1])
-            ngram_stat[k].add(x)
-
-
-def update_ngram_blocking(pred, is_finished, parent_idx=None):
-    """Update N-gram blocking strategy data."""
-    if parent_idx is not None:
-        static.py_func(func=_gather_ngram_stat, x=parent_idx, out=None)
-    static.py_func(func=_update_ngram_blocking, x=(pred, is_finished), out=None)
+        if parent_idx is not None:
+            static.py_func(func=__gather__, x=parent_idx, out=None)
+        static.py_func(func=__wrapper__, x=(pred, is_finished), out=None)

@@ -101,6 +101,8 @@ class Generator(object):
 
         # n-gram blocking
         self.ngram_blocking = args.ngram_blocking
+        if self.ngram_blocking > 0:
+            self.ngram_blocking_processor = ops.NGramBlockingProcessor(self.ngram_blocking, args.bos_id, self.eos_id)
         return
 
     def inference(self, model, inputs, outputs):
@@ -141,7 +143,7 @@ class Generator(object):
             state["parent_idx"] = inputs["parent_idx"]
 
         if self.ngram_blocking > 0:
-            ops.init_ngram_blocking(inputs["token_ids"], self.ngram_blocking, self.bos_id, self.eos_id)
+            self.ngram_blocking_processor.init(inputs["token_ids"])
 
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
@@ -154,7 +156,7 @@ class Generator(object):
             logits = layers.elementwise_add(logits, token_penalty, axis=1)
 
             if self.ngram_blocking > 0:
-                logits = ops.apply_ngram_blocking(logits, state["is_finished"])
+                logits = self.ngram_blocking_processor.apply(logits, state["is_finished"])
 
             # min dec length
             min_len_cond = layers.less_than(x=step_idx, y=min_len)
@@ -262,9 +264,9 @@ class Generator(object):
 
             if self.ngram_blocking > 0:
                 if self.decoding_strategy == "beam_search":
-                    ops.update_ngram_blocking(selected_ids, state["is_finished"], parent_idx)
+                    self.ngram_blocking_processor.update(selected_ids, state["is_finished"], parent_idx)
                 else:
-                    ops.update_ngram_blocking(selected_ids, state["is_finished"])
+                    self.ngram_blocking_processor.update(selected_ids, state["is_finished"])
 
             length_cond = layers.less_than(x=step_idx, y=max_len)
             finish_cond = layers.logical_not(layers.reduce_all(layers.cast(state["is_finished"], "bool")))

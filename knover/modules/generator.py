@@ -65,11 +65,16 @@ class Generator(object):
         group.add_argument("--length_penalty", type=float, default=0.0,
                            help="The hyper-parameter in beam search.")
 
+        # n-gram blocking
+        group.add_argument("--ngram_blocking", type=int, default=0,
+                           help="N-gram blocking strategy.")
+
         return group
 
     def __init__(self, args):
         self.min_dec_len = args.min_dec_len
         self.max_dec_len = args.max_dec_len
+        self.bos_id = args.bos_id
         self.eos_id = args.eos_id
         self.unk_id = args.unk_id
         self.mask_id = args.mask_id
@@ -93,6 +98,9 @@ class Generator(object):
         self.beam_size = args.beam_size
         self.length_penalty = args.length_penalty
         self.length_average = args.length_average
+
+        # n-gram blocking
+        self.ngram_blocking = args.ngram_blocking
         return
 
     def inference(self, model, inputs, outputs):
@@ -132,6 +140,9 @@ class Generator(object):
         if self.decoding_strategy == "beam_search":
             state["parent_idx"] = inputs["parent_idx"]
 
+        if self.ngram_blocking > 0:
+            ops.init_ngram_blocking(inputs["token_ids"], self.ngram_blocking, self.bos_id, self.eos_id)
+
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
         while_op = layers.While(cond)
@@ -141,6 +152,9 @@ class Generator(object):
             logits = model._calc_logits(dec_out)
 
             logits = layers.elementwise_add(logits, token_penalty, axis=1)
+
+            if self.ngram_blocking > 0:
+                logits = ops.apply_ngram_blocking(logits, state["is_finished"])
 
             # min dec length
             min_len_cond = layers.less_than(x=step_idx, y=min_len)
@@ -245,6 +259,12 @@ class Generator(object):
                 selected_ids,
                 selected_scores,
                 step_idx)
+
+            if self.ngram_blocking > 0:
+                if self.decoding_strategy == "beam_search":
+                    ops.update_ngram_blocking(selected_ids, state["is_finished"], parent_idx)
+                else:
+                    ops.update_ngram_blocking(selected_ids, state["is_finished"])
 
             length_cond = layers.less_than(x=step_idx, y=max_len)
             finish_cond = layers.logical_not(layers.reduce_all(layers.cast(state["is_finished"], "bool")))

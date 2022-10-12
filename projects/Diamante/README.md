@@ -51,9 +51,6 @@ bash ./scripts/local/job.sh ./projects/Diamante/train.conf
 ### Inference
 
 ```bash
-# Decompress the saved model
-tar -xvf ./projects/Diamante/output/best.tar
-
 # Interact with the model
 bash ./scripts/local/job.sh ./projects/Diamante/infer.conf
 ```
@@ -63,9 +60,6 @@ After inference, you can find the output folder `./output` (by default). It cont
 ### Interacting with the model
 
 ```bash
-# Decompress the saved model
-tar -xvf ./projects/Diamante/output/best.tar
-
 # Interact with the model
 bash ./scripts/local/job.sh ./projects/Diamante/interact.conf
 ```

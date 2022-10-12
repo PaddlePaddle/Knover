@@ -3,15 +3,18 @@ import random
 import json
 
 
-
 def get_F1(string, sub):
+    """calculate F1 score"""
+
     common = Counter(string) & Counter(sub)
     overlap = sum(common.values())
-    recall, precision = overlap/len(sub), overlap/len(string)
-    return (2*recall*precision) / (recall+precision+1e-12)
+    recall, precision = overlap / len(sub), overlap / len(string)
+    return (2 * recall * precision) / (recall + precision + 1e-12)
 
 
 def write_train_tsv(out_path, paddle_data):
+    """write data"""
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("src\ttgt\tlabel\n")
         for line in paddle_data:
@@ -21,6 +24,7 @@ def write_train_tsv(out_path, paddle_data):
 
 
 def build_data(file_name, epoches=1):
+    """build training data"""
 
     neg_pool = []
     for dialog in open(file_name, encoding="utf-8"):
@@ -34,18 +38,19 @@ def build_data(file_name, epoches=1):
         for dialog in open(file_name, encoding="utf-8"):
 
             dialog = json.loads(dialog)
-            context = [conv["utterance"] for conv in dialog['conversation']]
+            context = [conv["utterance"] for conv in dialog["conversation"]]
             for index in range(1, len(context)):
 
                 src = context[:index]
                 src = " [SEP] ".join(src)
 
                 human_reply = context[index]
-                random_reply = neg_pool[random.randint(0, len(neg_pool)-1)]
+                random_reply = neg_pool[random.randint(0, len(neg_pool) - 1)]
 
-                bot_reply = [b for b in dialog["conversation"][index]["response_candidates"] if b not in ["", human_reply]]
+                bot_reply = [b for b in dialog["conversation"][index]["response_candidates"]
+                             if b not in ["", human_reply]]
                 similarity = [[get_F1(human_reply, b), b] for b in bot_reply]
-                bot_reply = sorted(similarity, key=lambda x:x[0], reverse=False)
+                bot_reply = sorted(similarity, key=lambda x: x[0], reverse=False)
                 bot_reply = [b[1] for b in bot_reply[:5]]
                 random.shuffle(bot_reply)
 
@@ -73,13 +78,11 @@ def build_data(file_name, epoches=1):
     return ob
 
 
-
 data = build_data("./projects/Diamante/luge_Diamante/train.txt", epoches=5)
-write_train_tsv('./projects/Diamante/processed_data/train.tsv', data)
+write_train_tsv("./projects/Diamante/processed_data/train.tsv", data)
 
 data = build_data("./projects/Diamante/luge_Diamante/valid.txt", epoches=1)
-write_train_tsv('./projects/Diamante/processed_data/valid.tsv', data)
+write_train_tsv("./projects/Diamante/processed_data/valid.tsv", data)
 
 data = build_data("./projects/Diamante/luge_Diamante/test.txt", epoches=1)
-write_train_tsv('./projects/Diamante/processed_data/test.tsv', data)
-
+write_train_tsv("./projects/Diamante/processed_data/test.tsv", data)

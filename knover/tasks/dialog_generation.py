@@ -81,8 +81,6 @@ class DialogGeneration(Task):
         else:
             self.nsp_predictor = None
 
-        self.debug_mode = True
-
         self.ranking_score = args.ranking_score
         self.max_dec_len = args.max_dec_len
 

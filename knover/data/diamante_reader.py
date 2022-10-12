@@ -35,6 +35,7 @@ class DiamanteReader(DialogReader):
         self.fields.append("label")
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
 
+        self.use_turn = args.use_turn
         self.do_generation = args.get("do_generation", False)
         return
 

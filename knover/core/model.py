@@ -621,3 +621,4 @@ class Model(ABC):
             self.exe,
             self.infer_program,
             program_only=True)
+        print(f"Save inference model into: {inference_model_path}")

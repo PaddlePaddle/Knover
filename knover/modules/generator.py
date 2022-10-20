@@ -155,6 +155,7 @@ class Generator(object):
             if model.dtype == "float16":
                 logits = layers.cast(logits, "float32")
 
+            # ignore unk and mask token
             logits = layers.elementwise_add(logits, token_penalty, axis=1)
 
             if self.ngram_blocking > 0:

@@ -103,4 +103,6 @@ def parse_args(parser: argparse.ArgumentParser, allow_unknown=False) -> Args:
                 args[group.title].update(group_args)
             else:
                 args[group.title] = group_args
+    if args.config_path:
+        args.load(args.config_path, "Model")
     return args

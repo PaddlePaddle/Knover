@@ -23,7 +23,6 @@ python -m \
     --model ${model} \
     --task ${task} \
     --vocab_path ${vocab_path} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --init_pretraining_params ${init_params:-""} \
     --init_checkpoint ${init_checkpoint:-""} \
     --train_file ${train_file} \

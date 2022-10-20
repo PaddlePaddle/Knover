@@ -19,10 +19,6 @@ if [[ ${log_dir:-""} != "" ]]; then
     distributed_args="${distributed_args:-} --log_dir ${log_dir}"
 fi
 
-if [[ ${use_sharding:-"false"} == "true" ]]; then
-    export FLAGS_eager_delete_tensor_gb=3.0
-fi
-
 if [[ ${spm_model_file:-""} != "" ]]; then
     train_args="--spm_model_file ${spm_model_file} ${train_args:-}"
 fi
@@ -34,7 +30,6 @@ fleetrun \
     --model ${model} \
     --task ${task} \
     --vocab_path ${vocab_path} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --init_pretraining_params ${init_params:-""} \
     --init_checkpoint ${init_checkpoint:-""} \
     --train_file ${train_file} \

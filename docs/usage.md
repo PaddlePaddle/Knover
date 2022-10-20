@@ -8,8 +8,10 @@ Carry out local job (local training / local inference / local interaction) with 
 ```
 
 - An example of training configuration files is `./package/dialog_en/24L_train.conf`. It contains three sections: `job`, `task` and `training`.
+- An example of evaluation configuration files is `./package/dialog_en/24L_evaluate.conf`. It contains three sections: `job`, `task` and `evaluation`.
 - An example of inference configuration files is `./package/dialog_en/24L_infer.conf`. It contains three sections: `job`, `task` and `inference`.
 - An example of interaction configuration files is `./package/dialog_en/24L_interact.conf`. It contains three sections: `job`, `task` and `interaction`.
+- An example of self-chat configuration files is `./package/dialog_en/self_chat.conf`. It contains three sections: `job`, `task` and `self-chat`.
 
 #### job
 

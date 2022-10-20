@@ -15,7 +15,6 @@ python -u ./projects/DSTC10-Track2/task1/infer.py \
     --model ${model:-"UnifiedTransformer"} \
     --vocab_path ${vocab_path} \
     --specials_path ${specials_path:-""} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --spm_model_file ${spm_model_file} \
     --init_pretraining_params ${init_params:-""} \
     --infer_file ${infer_file} \

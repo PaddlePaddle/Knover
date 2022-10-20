@@ -41,7 +41,6 @@ def setup_args():
     tasks.add_cmdline_args(parser)
 
     args = parse_args(parser)
-    args.load(args.config_path, "Model")
     args.run_infer = True # only build infer program
     args.display()
     return args

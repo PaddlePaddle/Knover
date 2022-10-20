@@ -14,13 +14,13 @@ export FLAGS_fuse_parameter_memory_size=64
 
 mkdir -p ${save_path}
 
+if [[ ${log_dir:-""} != "" ]]; then
+    distributed_args="${distributed_args:-} --log_dir ${log_dir}"
+fi
+
 if [[ ${spm_model_file:-""} != "" ]]; then
     save_args="--spm_model_file ${spm_model_file} ${save_args:-}"
     infer_args="--spm_model_file ${spm_model_file} ${infer_args:-}"
-fi
-
-if [[ ${log_dir:-""} != "" ]]; then
-    distributed_args="${distributed_args:-} --log_dir ${log_dir}"
 fi
 
 # Process NSP model(for reranking in dialogue generation task).
@@ -74,7 +74,6 @@ fleetrun \
     --task ${task} \
     --vocab_path ${vocab_path} \
     --config_path ${config_path} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --init_pretraining_params ${init_params} \
     --infer_file ${infer_file} \
     --data_format ${data_format:-"raw"} \

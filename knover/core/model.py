@@ -20,6 +20,7 @@ import numpy as np
 import paddle
 from paddle.distributed import init_parallel_env
 import paddle.distributed.fleet as fleet
+import paddle.distributed.fleet.meta_optimizers.sharding as sharding
 import paddle.fluid as fluid
 import paddle.fluid.layers as layers
 import paddle.optimizer.lr as lr
@@ -142,7 +143,8 @@ class Model(ABC):
             if self.use_amp:
                 print("[WARN] Cannot support AMP in non-distributed mode.")
 
-        self.exe = fluid.Executor(place)
+        self.exe = paddle.static.Executor(place)
+
         # model mode
         self.run_infer = args.get("run_infer", False)
         self.batch_size = args.get("batch_size", 1)
@@ -156,8 +158,7 @@ class Model(ABC):
     def _init_distributed_strategy(self):
         """Initialize distributed strategy."""
         exec_strategy = fluid.ExecutionStrategy()
-        exec_strategy.use_experimental_executor = True
-        exec_strategy.num_threads = 4
+        exec_strategy.num_threads = 2
         exec_strategy.num_iteration_per_drop_scope = 1
 
         dist_strategy = fleet.DistributedStrategy()
@@ -209,12 +210,20 @@ class Model(ABC):
         }
         return
 
+    def _clone(self, prog):
+        if self.use_sharding and self.sharding_degree > 1:
+            prog = prog.clone(for_test=True)
+            sharding.utils.add_sync_comm(prog, sharding_ring_id=1) # default sharding_ring_id is 1
+            return prog
+        else:
+            return prog.clone(for_test=True)
+
     def _build_programs(self):
         """Build programs.
 
         Build training program, evaluation program and inference program. Only use in static graph mode.
         """
-        self.startup_program = fluid.Program()
+        self.startup_program = paddle.static.Program()
 
         if self.run_infer:
             self.dtype = "float16" if self.use_amp else "float32"
@@ -222,9 +231,9 @@ class Model(ABC):
             if self.is_distributed and self.use_sharding:
                 init_parallel_env()
             # build inference program
-            self.infer_program = fluid.Program()
-            with fluid.program_guard(self.infer_program, self.startup_program):
-                with fluid.unique_name.guard():
+            self.infer_program = paddle.static.Program()
+            with paddle.static.program_guard(self.infer_program, self.startup_program):
+                with paddle.utils.unique_name.guard():
                     self.infer_feed_dict = inputs = self._get_feed_dict(is_infer=True)
                     outputs = self.forward(inputs, is_infer=True)
                     predictions = self.infer(inputs, outputs)
@@ -239,9 +248,9 @@ class Model(ABC):
                 self._init_distributed_strategy()
 
             # build training program
-            self.train_program = fluid.Program()
-            with fluid.program_guard(self.train_program, self.startup_program):
-                with fluid.unique_name.guard():
+            self.train_program = paddle.static.Program()
+            with paddle.static.program_guard(self.train_program, self.startup_program):
+                with paddle.utils.unique_name.guard():
                     self.feed_dict = inputs = self._get_feed_dict()
                     outputs = self.forward(inputs)
 
@@ -252,10 +261,10 @@ class Model(ABC):
                     self.optimize(metrics)
 
                     # build evaluation program
-                    self.eval_program = self.train_program.clone(for_test=True)
+                    self.eval_program = self._clone(self.train_program)
                     self.eval_fetch_dict = dict(**metrics)
 
-                    global_vars = fluid.default_main_program().global_block().vars
+                    global_vars = paddle.static.default_main_program().global_block().vars
                     metrics["scheduled_lr"] = global_vars["learning_rate_0"]
                     if self.is_distributed and self.use_amp:
                         loss_scaling = global_vars["loss_scaling_0"]

@@ -23,8 +23,8 @@ if [[ ${log_dir:-""} != "" ]]; then
     distributed_args="${distributed_args:-} --log_dir ${log_dir}"
 fi
 
-if [[ ${use_sharding:-"false"} == "true" ]]; then
-    export FLAGS_eager_delete_tensor_gb=3.0
+if [[ ${spm_model_file:-""} != "" ]]; then
+    eval_args="--spm_model_file ${spm_model_file} ${eval_args:-}"
 fi
 
 fleetrun \

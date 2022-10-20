@@ -47,7 +47,6 @@ def setup_args():
     tasks.add_cmdline_args(parser)
 
     args = parse_args(parser)
-    args.load(args.config_path, "Model")
     args.display()
     return args
 

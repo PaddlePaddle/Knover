@@ -28,7 +28,6 @@ python -m \
     --task ${task:-"DenseEmbedding"} \
     --vocab_path ${vocab_path} \
     --specials_path ${specials_path:-""} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --spm_model_file ${spm_model_file} \
     --init_pretraining_params ${init_params:-""} \
     --infer_file ${src_infer_file} \
@@ -56,7 +55,6 @@ python -m \
     --task ${task:-"DenseEmbedding"} \
     --vocab_path ${vocab_path} \
     --specials_path ${specials_path:-""} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --spm_model_file ${spm_model_file} \
     --init_pretraining_params ${init_params:-""} \
     --infer_file ${knowledge_infer_file} \

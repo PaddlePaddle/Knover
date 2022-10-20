@@ -14,10 +14,6 @@ export FLAGS_fuse_parameter_memory_size=64
 
 mkdir -p ${save_path}
 
-if [[ ${spm_model_file:-""} != "" ]]; then
-    eval_args="--spm_model_file ${spm_model_file} ${eval_args:-}"
-fi
-
 if [[ ${log_dir:-""} != "" ]]; then
     mkdir -p ${log_dir}
     distributed_args="${distributed_args:-} --log_dir ${log_dir}"

@@ -33,7 +33,6 @@ def setup_args():
     parser.add_argument("--inference_model_path", type=str, required=True)
 
     args = parse_args(parser)
-    args.load(args.config_path, "Model")
     args.run_infer = True # only build infer program
     args.display()
     return args

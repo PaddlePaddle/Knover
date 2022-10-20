@@ -41,7 +41,6 @@ python -m \
     --task ${task} \
     --vocab_path ${vocab_path} \
     --config_path ${config_path} \
-    --do_lower_case ${do_lower_case:-"false"} \
     --init_pretraining_params ${init_params} \
     --infer_file ${infer_file} \
     --data_format ${data_format:-"raw"} \

@@ -18,14 +18,11 @@ import os
 import paddle.fluid as fluid
 
 
-def create_predictor(inference_model_path, is_distributed=False):
+def create_predictor(inference_model_path, place=None, return_numpy=True):
     """Create predictor."""
-    if is_distributed:
-        gpu_id = int(os.getenv("FLAGS_selected_gpus"))
-    else:
-        gpu_id = 0
-
-    place = fluid.CUDAPlace(gpu_id)
+    if place is None:
+        gpu_id = int(os.getenv("FLAGS_selected_gpus", 0))
+        place = fluid.CUDAPlace(gpu_id)
     exe = fluid.Executor(place)
 
     scope = fluid.Scope()
@@ -39,6 +36,6 @@ def create_predictor(inference_model_path, is_distributed=False):
                 inference_prog,
                 feed=inputs,
                 fetch_list=fetch_targets,
-                return_numpy=True)
+                return_numpy=return_numpy)
             return outputs
     return __predict__

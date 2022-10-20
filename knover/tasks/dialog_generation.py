@@ -75,9 +75,7 @@ class DialogGeneration(Task):
             self.reader = DialogReader(args)
 
         if args.nsp_inference_model_path:
-            self.nsp_predictor = create_predictor(
-                args.nsp_inference_model_path,
-                args.get("is_distributed", False))
+            self.nsp_predictor = create_predictor(args.nsp_inference_model_path)
         else:
             self.nsp_predictor = None
 
@@ -397,11 +395,9 @@ def get_nsp_score_batch(nsp_predictor, predictions):
     parser = argparse.ArgumentParser()
     NextSentencePrediction.add_cmdline_args(parser)
     parser.add_argument("--num_samples", type=int, default=None)
-    parser.add_argument("--config_path", type=str, required=True)
     parser.add_argument("--mem_efficient", type=str2bool, default=False)
 
     args = parse_args(parser, allow_unknown=True)
-    args.load(args.config_path)
     if not args.mem_efficient:
         if args.num_samples:
             args.batch_size *= args.num_samples

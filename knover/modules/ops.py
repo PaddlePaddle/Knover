@@ -29,23 +29,35 @@ sampling_rng = None
 
 
 def reset_state(generate_seed):
+    """Reset the global rng.
+
+    Global rng is used to generate sampling seed to initialize sampling rng.
+    """
     global global_rng
     if global_rng is None:
         global_rng = np.random.RandomState(generate_seed)
 
     global sampling_seed
-    sampling_seed = global_rng.randint(0, 2**32 - 1)
+    sampling_seed = global_rng.randint(0, 2 ** 32 - 1)
     reset_rng(sampling_seed)
-    return sampling_seed
+    return
 
 
-def reset_rng(random_seed):
+def reset_rng(sampling_seed):
+    """Reset sampling rng which is used in sampling_id.
+
+    After reset_rng with the same sampling_seed, you will get the same sampling result.
+
+    Args:
+        sampling_seed: a int value which is the seed of sampling rng.
+    """
     global sampling_rng
-    sampling_rng = np.random.RandomState(random_seed)
+    sampling_rng = np.random.RandomState(sampling_seed)
     return
 
 
 def _sampling_id(probs_list):
+    """Sampling from probability distributions in numpy."""
     probs_list = np.array(probs_list)
     global sampling_rng
     indices = []
@@ -56,6 +68,14 @@ def _sampling_id(probs_list):
 
 
 def sampling_id(probs):
+    """Sampling from probability distributions in PaddlePaddle.
+
+    Args:
+        probs: represents the probability distributions, shape is [batch_size, num_outputs]
+
+    Retrun:
+        The sampled indices, shape is [batch_size]
+    """
     prog = static.default_main_program()
     sampling_ids = prog.current_block().create_var(name="sampling_ids", dtype="int64", shape=[-1])
     static.py_func(func=_sampling_id, x=probs, out=sampling_ids)

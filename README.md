@@ -2,6 +2,8 @@
 Knover is a toolkit for knowledge grounded dialogue generation based on PaddlePaddle. Knover allows researchers and developers to carry out efficient training/inference of large-scale dialogue generation models. 
 
 ### What's New:
+
+* October 2022: We are opening [Q-TOD](projects/Q-TOD/README.md), a novel query-driven task-oriented dialogue system.
 * March 2022: We are opening [PLATO-KAG](projects/PLATO-KAG/README.md), an unsupervised learning approach for end-to-end knowledge-grounded conversation modeling.
 * February 2022: We are opening our TOD-DA dataset, models and code in [DSTC10-Track2](projects/DSTC10-Track2/README.md).
 * December 2021: We are opening the dialogue generation model of [PLATO-XL](projects/PLATO-XL/README.md), with up to 11 billion parameters.

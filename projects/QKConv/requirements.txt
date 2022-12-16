@@ -1,0 +1,9 @@
+rocketqa
+paddlepaddle-gpu
+rouge
+pyserini
+paddlenlp>=2.4.4
+drqa @ git+https://github.com/facebookresearch/DrQA#egg=DrQA
+pexpect==4.8
+torch
+jsonlines

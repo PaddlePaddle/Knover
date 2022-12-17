@@ -6,6 +6,15 @@
 
 
 ## Overview
+**QKConv** is an unsupervised query-enhanced model for knowledge-intensive conversations via joint training, which consists of a query generator, an off-the-shelf knowledge selector, and a response generator.
+
+<p align="center">
+  <img width="100%" src="overview.png" alt="QKConv Overview" />
+</p>
+
+* QKConv does not require extra supervision, such as query annotations and knowledge retrieval provenance, and solely utilizes the dialogue context and target response.
+* The joint training of QKConv guarantees to generate queries beneficial for knowledge selection and fosters knowledge utilization in response generation.
+* We verify our approach on conversational question answering, task-oriented dialogue, and open-domain knowledge-grounded dialogue. QKConv achieves the state-of-the-art unsupervised performance on three datasets and even outperforms certain supervised methods.
 
 
 ## Requirements and Installation

@@ -122,6 +122,7 @@ class DialogReader(object):
         self.current_example = 0
         self.current_epoch = 0
         self.num_examples = 0
+        self.data_id = 0
 
         # model related
         self.use_role = args.use_role

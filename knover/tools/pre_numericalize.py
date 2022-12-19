@@ -18,7 +18,7 @@ import argparse
 from tqdm import tqdm
 
 from knover.data.dialog_reader import DialogReader
-from knover.utils import parse_args
+from knover.utils import parse_args, str2bool
 
 
 def setup_args():
@@ -26,8 +26,14 @@ def setup_args():
     parser = argparse.ArgumentParser()
     DialogReader.add_cmdline_args(parser)
 
-    parser.add_argument("--input_file", type=str, required=True)
-    parser.add_argument("--output_file", type=str, required=True)
+    parser.add_argument("--input_file", type=str, required=True,
+                        help="The path of input: raw tsv file.")
+    parser.add_argument("--output_file", type=str, required=True,
+                        help="The path of output: numerical file.")
+    parser.add_argument("--use_role", type=str2bool, default=False,
+                        help="Whether use role embeddings.")
+    parser.add_argument("--use_turn", type=str2bool, default=False,
+                        help="Whether use turn embeddings.")
 
     args = parse_args(parser)
     return args

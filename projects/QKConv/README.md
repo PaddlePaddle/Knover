@@ -2,8 +2,7 @@
 <p align="center">
   <!-- <a href="https://2022.emnlp.org/"><img src="https://img.shields.io/badge/EMNLP-2022-brightgreen"></a> -->
   <a href="http://arxiv.org/abs/2212.09588"><img src="https://img.shields.io/badge/Paper-PDF-blue"></a> 
-
-
+</p>
 
 ## Overview
 **QKConv** is an unsupervised query enhanced model for knowledge-intensive conversations via joint training, which consists of a query generator, an off-the-shelf knowledge selector, and a response generator.

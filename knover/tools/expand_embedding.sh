@@ -8,7 +8,7 @@ PYTHONPATH=.
 
 PARAM_PATH=$1
 python -u \
-    ./tools/expand_embedding.py \
+    ./knover/tools/expand_embedding.py \
     --param_path ${PARAM_PATH} \
     --save_path ${PARAM_PATH} \
     --embedding_name pos_embedding \

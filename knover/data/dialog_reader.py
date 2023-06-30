@@ -14,6 +14,7 @@
 """Dialogue Reader."""
 
 from collections import namedtuple
+import glob
 import os
 
 import numpy as np 
@@ -48,16 +49,19 @@ class DialogReader(object):
                            choices=["original", "reversed"],
                            help="How to concatenate multipe knowledges. `original` concatenate knowledges in "
                            "original order, and `reversed` means concatenate knowledges in reversed order.")
+        group.add_argument("--knowledge_truncate", type=str, default="right",
+                           choices=["left", "right"],
+                           help="How to truncate knowledge.")
         group.add_argument("--truncate_first_turn", type=str2bool, default=False,
-                           help="Whether truncate the first turn.")
+                           help="Whether to truncate the first turn.")
         group.add_argument("--file_format", type=str, default="file",
-                           choices=["file", "filelist"],
+                           choices=["file", "filelist", "glob"],
                            help="The input file format.")
         group.add_argument("--data_format", type=str, default="raw",
                            choices=["raw", "tokenized", "numerical"],
                            help="The data format of each file.")
         group.add_argument("--in_tokens", type=str2bool, default=False,
-                           help="Whether batchify examples by the number of tokens.")
+                           help="Whether to batchify examples by the number of tokens.")
         group.add_argument("--batch_size", type=int, default=16,
                            help="The size of batches. If `in_tokens` is false, then batchify every X examples."
                            "If `in_tokens` is true, then batchify examples which contains nearly X tokens.")
@@ -94,6 +98,7 @@ class DialogReader(object):
         self.max_knowledge_len = args.max_knowledge_len
         self.knowledge_position = args.knowledge_position
         self.knowledge_style = args.knowledge_style
+        self.knowledge_truncate = args.knowledge_truncate
         self.truncate_first_turn = args.truncate_first_turn
         self.file_format = args.file_format
         self.data_format = args.data_format
@@ -107,7 +112,7 @@ class DialogReader(object):
 
         if self.shuffle_pool_size > 0 and self.sort_pool_size > 0:
             raise ValueError(f"Cannot set `shuffle_pool_size = {self.shuffle_pool_size}`"
-                             f" and `sort_pool_size = ${self.sort_pool_size}` both positive.")
+                             f" and `sort_pool_size = {self.sort_pool_size}` both positive.")
 
         assert args.max_knowledge_len + args.max_src_len + args.max_tgt_len <= args.max_seq_len, \
             "args.max_knowledge_len + args.max_src_len + args.max_tgt_len > args.max_seq_len"
@@ -151,7 +156,7 @@ class DialogReader(object):
         """Gets progress for training phase."""
         return self.current_epoch, self.current_file_index, self.total_file
 
-    def _parse_src(self, src):
+    def _parse_src(self, src, max_src_len):
         """Parse source sequence and return corresponding fields."""
         # process src
         src_token_ids = []
@@ -164,8 +169,8 @@ class DialogReader(object):
         s_token_ids_list = []
         for s in src.split("[SEP]"):
             s = s.strip()
-            if self.use_role and "\1" in s:
-                s, role_id = s.split("\1")
+            if self.use_role and "\x01" in s:
+                s, role_id = s.split("\x01")
                 role_id = int(role_id)
                 role_id_list.append(role_id)
 
@@ -182,9 +187,9 @@ class DialogReader(object):
         total_token_num = 1
         while idx >= 0:
             total_token_num += len(s_token_ids_list[idx])
-            if total_token_num > self.max_src_len:
+            if total_token_num > max_src_len:
                 if self.truncate_first_turn and idx == 0:
-                    truncated_ids = s_token_ids_list[idx][:self.max_src_len - total_token_num]
+                    truncated_ids = s_token_ids_list[idx][:max_src_len - total_token_num]
                     if len(truncated_ids) > 1:
                         s_token_ids_list[idx] = truncated_ids[:-1] + [self.eos_id]
                         idx -= 1
@@ -194,6 +199,9 @@ class DialogReader(object):
         if self.use_role and len(role_id_list) == 0:
             for i in range(len(s_token_ids_list)):
                 role_id_list.append((len(s_token_ids_list) - i) % 2)
+        if self.use_role:
+            assert len(role_id_list) == len(s_token_ids_list), \
+                "All utterances must have a role_id if you using custom role_id."
         for i, s_token_ids in enumerate(s_token_ids_list[idx + 1:], idx + 1):
             src_token_ids += s_token_ids
             src_pos_ids += list(range(1, len(s_token_ids) + 1))
@@ -221,8 +229,16 @@ class DialogReader(object):
             ks = knowledge.split("[SEP]")
         elif self.knowledge_style == "reversed":
             ks = reversed(knowledge.split("[SEP]"))
+        if self.use_role:
+            ks_role_ids = [0]
         for k in ks:
             k = k.strip()
+            if self.use_role:
+                if "\x01" in k:
+                    k, role_id = k.split("\x01")
+                    role_id = int(role_id)
+                else:
+                    role_id = 0
             if self.data_format == "tokenized":
                 k_tokens = k.split(" ")
             else:
@@ -231,14 +247,20 @@ class DialogReader(object):
             k_token_ids = self.tokenizer.convert_tokens_to_ids(k_tokens) + [self.eos_id]
             ks_token_ids += k_token_ids
             ks_pos_ids += list(range(1, len(k_token_ids) + 1))
+            if self.use_role:
+                ks_role_ids += [role_id] * len(k_token_ids)
 
         if len(ks_token_ids) > self.max_knowledge_len:
-            if self.knowledge_style == "original":
-                ks_token_ids = ks_token_ids[:self.max_knowledge_len]
-                ks_pos_ids = ks_pos_ids[:self.max_knowledge_len]
+            if self.knowledge_truncate == "right":
+                ks_token_ids = ks_token_ids[:self.max_knowledge_len - 1] + ks_token_ids[-1:]
+                ks_pos_ids = ks_pos_ids[:self.max_knowledge_len - 1] + ks_pos_ids[-1:]
+                if self.use_role:
+                    ks_role_ids = ks_role_ids[:self.max_knowledge_len] + ks_role_ids[-1:]
             else:
-                ks_token_ids = ks_token_ids[-self.max_knowledge_len:]
-                ks_pos_ids = ks_pos_ids[-self.max_knowledge_len:]
+                ks_token_ids = ks_token_ids[:1] + ks_token_ids[-self.max_knowledge_len + 1:]
+                ks_pos_ids = ks_pos_ids[:1] + ks_pos_ids[-self.max_knowledge_len + 1:]
+                if self.use_role:
+                    ks_role_ids = ks_role_ids[:1] + ks_role_ids[-self.max_knowledge_len + 1:]
 
         field_values = {
             "token_ids": ks_token_ids,
@@ -246,17 +268,17 @@ class DialogReader(object):
             "pos_ids": ks_pos_ids
         }
         if self.use_role:
-            field_values["role_ids"] = [0] * len(ks_token_ids)
+            field_values["role_ids"] = ks_role_ids
 
         return field_values
 
-    def _parse_tgt(self, tgt):
+    def _parse_tgt(self, tgt, add_eos=True):
         """Parse target sequence and return corresponding fields."""
         # process tgt
         tgt = tgt.strip()
         if self.use_role:
-            if "\1" in tgt:
-                tgt, role_id = tgt.split("\1")
+            if "\x01" in tgt:
+                tgt, role_id = tgt.split("\x01")
                 role_id = int(role_id)
             else:
                 role_id = 0
@@ -266,12 +288,12 @@ class DialogReader(object):
             tgt_tokens = self.tokenizer.tokenize(tgt)
 
         tgt_token_ids = self.tokenizer.convert_tokens_to_ids(tgt_tokens)
-        tgt_token_ids.append(self.eos_id)
+        tgt_token_ids = [self.bos_id] + tgt_token_ids
+        if add_eos:
+            tgt_token_ids.append(self.eos_id)
 
         # trim tgt
-        tgt_token_ids = tgt_token_ids[:self.max_tgt_len - 1]
-
-        tgt_token_ids = [self.bos_id] + tgt_token_ids
+        tgt_token_ids = tgt_token_ids[:self.max_tgt_len]
 
         field_values = {
             "token_ids": tgt_token_ids,
@@ -283,41 +305,51 @@ class DialogReader(object):
 
         return field_values
 
+    def _merge_field_values(self, field_values1, field_values2):
+        if field_values1 is None:
+            return field_values2
+        if field_values2 is None:
+            return field_values1
+        return {
+            k: field_values1[k] + field_values2[k]
+            for k in field_values1
+        }
+
     def _convert_example_to_record(self, example, is_infer):
         """Convert an example to a record which can be used as the model's input."""
-        field_values = self._parse_src(example.src)
-        if len(field_values["token_ids"]) == 1:
-            raise ValueError(f"Invalid example: context too long / no context - {example}")
-
-        if self.max_knowledge_len > 0:
+        if self.max_knowledge_len > 0 and "knowledge" in example._fields:
             # add knowledge
             knowledge_field_values = self._parse_knowledge(example.knowledge)
+            knowledge_len = len(knowledge_field_values["token_ids"])
+        else:
+            knowledge_len = 0
+
+        if "src" in example._fields:
+            field_values = self._parse_src(example.src, self.max_src_len + self.max_knowledge_len - knowledge_len)
+            if len(field_values["token_ids"]) == 1:
+                raise ValueError(f"Invalid example: context too long / no context - {example}")
+        else:
+            field_values = None
+
+        if self.max_knowledge_len > 0 and "knowledge" in example._fields:
             if self.knowledge_position == "pre_src":
-                field_values = {
-                    k: knowledge_field_values[k] + field_values[k]
-                    for k in field_values
-                }
+                field_values = self._merge_field_values(knowledge_field_values, field_values)
             else:
-                field_values = {
-                    k: field_values[k] + knowledge_field_values[k]
-                    for k in field_values
-                }
+                field_values = self._merge_field_values(field_values, knowledge_field_values)
 
-        tgt_start_idx = len(field_values["token_ids"])
+        tgt_start_idx = len(field_values["token_ids"]) if field_values is not None else 0
 
-        if self.position_style == "relative":
+        if self.position_style == "relative" and field_values is not None:
             ctx_len = len(field_values["token_ids"])
             field_values["pos_ids"] = [
                 self.max_tgt_len + ctx_len - i - 1
                 for i in range(ctx_len)
             ]
 
-        if (not is_infer or not self.do_generation) and hasattr(example, "tgt"):
-            tgt_field_values = self._parse_tgt(example.tgt)
-            field_values = {
-                k: field_values[k] + tgt_field_values[k]
-                for k in field_values
-            }
+        tgt_field_values = self._parse_tgt(
+            "" if is_infer and self.do_generation and "tgt" not in example._fields else example.tgt,
+            add_eos=not is_infer or not self.do_generation)
+        field_values = self._merge_field_values(field_values, tgt_field_values)
 
         if self.position_style == "continuous":
             field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
@@ -351,13 +383,12 @@ class DialogReader(object):
             cols = list(map(lambda x: list(map(int, x.split(" "))), cols))
             if len(cols) > self.num_numerical_fields:
                 cols = cols[:self.num_numerical_fields]
-            if is_infer and self.do_generation:
-                tgt_start_idx = len(cols[0])
-            else:
-                # get the start position of target sequence
-                # if you change the numerical data format, you must to make sure the last part of
-                # numerical sequence is the target sequence
-                tgt_start_idx = rindex(cols[0], self.bos_id)
+
+            # get the start position of target sequence
+            # if you change the numerical data format, you must to make sure the last part of
+            # numerical sequence is the target sequence
+            tgt_start_idx = rindex(cols[0], self.bos_id)
+
             record = self.Record(*cols, tgt_start_idx=tgt_start_idx, data_id=self.data_id)
             self.data_id += 1
             yield record
@@ -381,9 +412,12 @@ class DialogReader(object):
 
         return __wrapper__
 
-    def _read_files(self, filelist, phase, is_infer, shuffle_files):
+    def _read_files(self, input_file, phase, is_infer, shuffle_files):
         """Read multiply files and yield records."""
-        input_files = open(filelist).readlines()
+        if self.file_format == "filelist":
+            input_files = sorted(open(input_file).readlines())
+        else:
+            input_files = sorted(glob.glob(input_file))
         def __wrapper__():
             if shuffle_files:
                 self.global_rng.shuffle(input_files)
@@ -493,7 +527,7 @@ class DialogReader(object):
 
     def _batch_reader(self, reader, phase=None, is_infer=False):
         """Construct a batch reader from a record reader."""
-        if self.sort_pool_size > 0 and not is_infer:
+        if self.sort_pool_size > 0 and phase == "train":
             return self._get_sorted_batch(reader)
         else:
             return self._get_batch(reader)
@@ -553,7 +587,7 @@ class DialogReader(object):
             nonlocal reader
             if reader is None:
                 self.data_id = 0
-                if self.file_format == "filelist":
+                if self.file_format in ["filelist", "glob"]:
                     reader = self._read_files(input_file, phase, is_infer, not phase.endswith("test"))
                 else:
                     if phase == "train":
@@ -571,17 +605,17 @@ class DialogReader(object):
             elif phase.startswith("distributed"):
                 batch_reader = self._distributed_batch_reader(batch_reader, num_part, part_id, is_test=is_infer)
 
-            try:
-                for epoch_index in range(num_epochs):
+            for epoch_index in range(num_epochs):
+                try:
                     if phase == "train":
                         self.current_example = 0
                         self.current_epoch = epoch_index + 1
                     for batch in batch_reader():
                         yield self._pad_batch_records(batch, is_infer, phase=phase)
-            except:
-                import traceback
-                traceback.print_exc()
-                raise
+                except:
+                    import traceback
+                    traceback.print_exc()
+                    raise
 
         return __wrapper__
 
@@ -618,6 +652,21 @@ class DialogReader(object):
                 input_mask_data[index, :len(token_ids) + num_aux_token, :len(token_ids) + num_aux_token] = 1.0
         return input_mask_data.astype("float32")
 
+    def _gen_tgt_attn_mask(self, batch_token_ids, num_aux_token=0):
+        """Generate tgt attention masking matrix.
+
+        This is a helpful function to generation different type of attention masking matrix using in generation.
+        Args:
+            batch_token_ids: A batch of token ids.
+            num_aux_token: The number of auxiliary tokens. The auxiliary tokens will concatenate to the begin of
+                sequence. They are considered as a part of source sequence.
+        """
+        max_len = to_optimized_size(max(map(len, batch_token_ids)))
+        input_mask_data = np.zeros((len(batch_token_ids), 1, max_len + num_aux_token))
+        for index, token_ids in enumerate(batch_token_ids):
+            input_mask_data[index, :, :len(token_ids) + num_aux_token] = 1.0
+        return input_mask_data
+
     def _pad_batch_records(self, batch_records, is_infer, phase=None):
         """Padding a batch of records and construct model's inputs.
 
@@ -626,35 +675,26 @@ class DialogReader(object):
         batch_size = len(batch_records)
         batch = {}
         batch_token_ids = [record.token_ids for record in batch_records]
-        batch_type_ids = [record.type_ids for record in batch_records]
-        batch_pos_ids = [record.pos_ids for record in batch_records]
+        # NOTE: remove the last token
+        batch["token_ids"] = [record.token_ids[:-1] for record in batch_records]
+        batch["type_ids"] = pad_batch_data([record.type_ids[:-1] for record in batch_records], pad_id=0)
+        batch["pos_ids"] = pad_batch_data([record.pos_ids[:-1] for record in batch_records], pad_id=0)
         if self.use_role:
-            batch_role_ids = [record.role_ids for record in batch_records]
-        batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
-        if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
+            batch["role_ids"] = pad_batch_data([record.role_ids[:-1] for record in batch_records], pad_id=0)
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
-        batch["generation_mask"] = self._gen_self_attn_mask(
-            batch_token_ids,
-            batch_tgt_start_idx=batch_tgt_start_idx)
+        batch["generation_mask"] = self._gen_self_attn_mask(batch["token_ids"], batch_tgt_start_idx)
 
         if is_infer:
             if self.do_generation:
-                tgt_ids = np.array([[[self.bos_id]]] * len(batch_token_ids), dtype="int64")
-                if self.position_style == "continuous":
-                    tgt_pos = np.array(batch_tgt_start_idx, dtype="int64")
-                else:
-                    tgt_pos = np.zeros_like(batch_tgt_start_idx, dtype="int64")
-                tgt_pos = tgt_pos.reshape(-1, 1, 1)
-                batch["init_score"] = np.zeros_like(tgt_ids, dtype="float32").reshape(-1, 1).tolist()
-                batch["tgt_ids"] = tgt_ids.tolist()
-                batch["tgt_pos"] = tgt_pos.tolist()
-                batch["parent_idx"] = np.array(range(batch_size), dtype="int32")
-
-                batch["tgt_generation_mask"] = batch["generation_mask"][:, 0:1, :]
+                batch["tgt_ids"] = np.array([record.token_ids[-1] for record in batch_records], dtype="int64").reshape(-1, 1, 1).tolist()
+                batch["tgt_type"] = np.array([record.type_ids[-1] for record in batch_records], dtype="int64").reshape(-1, 1)
+                batch["tgt_pos"] = np.array([record.pos_ids[-1] for record in batch_records], dtype="int64").reshape(-1, 1)
+                if self.use_role:
+                    batch["tgt_role"] = np.array([record.role_ids[-1] for record in batch_records], dtype="int64").reshape(-1, 1)
+                if self.use_turn:
+                    batch["tgt_turn"] = np.array([record.turn_ids[-1] for record in batch_records], dtype="int64").reshape(-1, 1)
+                batch["tgt_generation_mask"] = self._gen_tgt_attn_mask(batch["token_ids"])
             else:
                 batch["tgt_label"], batch["tgt_idx"] = mask(
                     batch_tokens=batch_token_ids,
@@ -665,8 +705,7 @@ class DialogReader(object):
                     mask_id=self.mask_id,
                     is_unidirectional=True)
 
-            batch_data_id = [record.data_id for record in batch_records]
-            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
+            batch["data_id"] = np.array([record.data_id for record in batch_records], dtype="int64")
         else:
             batch["tgt_label"], batch["tgt_idx"] = mask(
                 batch_tokens=batch_token_ids,
@@ -677,4 +716,5 @@ class DialogReader(object):
                 mask_id=self.mask_id,
                 is_unidirectional=True)
 
+        batch["token_ids"] = pad_batch_data(batch["token_ids"], pad_id=self.pad_id)
         return batch

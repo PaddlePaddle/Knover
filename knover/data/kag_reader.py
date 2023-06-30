@@ -19,7 +19,7 @@ import copy
 import numpy as np
 
 from knover.data.dialog_reader import DialogReader
-from knover.utils import mask, pad_batch_data, str2bool, to_optimized_size
+from knover.utils import mask, pad_batch_data, to_optimized_size
 
 class KAGReader(DialogReader):
     """KAG Reader."""
@@ -75,11 +75,10 @@ class KAGReader(DialogReader):
 
         topic_token_ids = self.tokenizer.convert_tokens_to_ids(topic_tokens)
         topic_token_ids.append(self.eos_id)
+        topic_token_ids = [self.bos_id] + topic_token_ids
 
         # trim topic
-        topic_token_ids = topic_token_ids[:self.max_topic_len - 1]
-
-        topic_token_ids = [self.bos_id] + topic_token_ids
+        topic_token_ids = topic_token_ids[:self.max_topic_len]
 
         field_values = {
             "token_ids": topic_token_ids,
@@ -133,11 +132,11 @@ class KAGReader(DialogReader):
         if k_num < self.max_knowledge_num:
             pad_k_item = {
                 "token_ids": [self.pad_id],
-                "type_ids": [self.pad_id],
-                "pos_ids": [self.pad_id]
+                "type_ids": [0],
+                "pos_ids": [0]
             }
             if self.use_role:
-                pad_k_item["role_ids"] = [self.pad_id]
+                pad_k_item["role_ids"] = [0]
 
             knowledge_list = knowledge_list + [pad_k_item] * (self.max_knowledge_num - k_num)
         else:
@@ -153,8 +152,8 @@ class KAGReader(DialogReader):
 
         if len(topic_field_values) > 0:
             src_field_values = {
-                        k: topic_field_values[k] + ori_src_field_values.get(k, [])
-                        for k in topic_field_values
+                k: topic_field_values[k] + ori_src_field_values.get(k, [])
+                for k in topic_field_values
             }
         elif len (ori_src_field_values) > 0:
             src_field_values = ori_src_field_values
@@ -166,19 +165,19 @@ class KAGReader(DialogReader):
         tgt_field_values = self._parse_tgt(example.tgt)
 
         field_values = {
-                    "dual_src_" + k: src_field_values[k]
-                    for k in src_field_values
+            "dual_src_" + k: src_field_values[k]
+            for k in src_field_values
         }
 
         field_values = {
-                    "dual_src_" + k: src_field_values[k]
-                    for k in src_field_values
+            "dual_src_" + k: src_field_values[k]
+            for k in src_field_values
         }
 
         tgt_label = tgt_field_values["token_ids"][1:]
         tgt_idx = [i for i in range(len(tgt_label))]
-        tgt_label = np.array(tgt_label).astype("int64").reshape([-1, 1])
-        tgt_idx = np.array(tgt_idx).astype("int64").reshape([-1, 1])
+        tgt_label = np.array(tgt_label, dtype="int64").reshape([-1, 1])
+        tgt_idx = np.array(tgt_idx, dtype="int64").reshape([-1, 1])
 
         tgt_mask_pos = []
         for i in range(len(tgt_idx)):
@@ -281,12 +280,10 @@ class KAGReader(DialogReader):
                 for i in range(ctx_len)
             ]
 
-        if (not is_infer or not self.do_generation) and hasattr(example, "tgt"):
-            tgt_field_values = self._parse_tgt(example.tgt)
-            field_values = {
-                k: field_values[k] + tgt_field_values[k]
-                for k in field_values
-            }
+        tgt_field_values = self._parse_tgt(
+            "" if is_infer and self.do_generation and "tgt" not in example._fields else example.tgt,
+            add_eos=not is_infer or not self.do_generation)
+        field_values = self._merge_field_values(field_values, tgt_field_values)
 
         if self.position_style == "continuous":
             field_values["pos_ids"] = list(range(len(field_values["token_ids"])))
@@ -339,8 +336,8 @@ class KAGReader(DialogReader):
             bos_id=1,
             eos_id=2,
             mask_id=3):
-        """
-        Add mask for batch_tokens, return out, mask_label, mask_pos;
+        """Add mask for batch_tokens, return out, mask_label, mask_pos;
+
         Note: mask_pos responding the batch_tokens after padded;
         """
         batch_tokens = copy.deepcopy(batch_tokens)
@@ -373,8 +370,8 @@ class KAGReader(DialogReader):
                         mask_label.append(self.bos_id)
                         mask_pos.append([i, k, mask_start_idx + offset])
 
-                mask_label = np.array(mask_label).astype("int64").reshape([-1, 1])
-                mask_pos = np.array(mask_pos).astype("int64").reshape([-1, 3])
+                mask_label = np.array(mask_label, dtype="int64").reshape([-1, 1])
+                mask_pos = np.array(mask_pos, dtype="int64").reshape([-1, 3])
                 mask_label_list.append(mask_label)
                 mask_pos_list.append(mask_pos)
 
@@ -386,8 +383,8 @@ class KAGReader(DialogReader):
         max_len = to_optimized_size(max(map(len, insts)))
         if given_len < max_len:
             raise ValueError(f"given_len = {given_len}, max_len = {max_len}, given_len should be larger than max_len in batch data.")
-        inst_data = np.array([list(inst) + [pad_id] * (given_len - len(inst)) for inst in insts])
-        return inst_data.astype("int64").reshape([-1, given_len, 1])
+        inst_data = np.array([list(inst) + [pad_id] * (given_len - len(inst)) for inst in insts], dtype="int64")
+        return inst_data.reshape([-1, given_len, 1])
 
     def _pad_batch_data_to_len_for_topk(self, insts, pad_id=0, given_len=0):
         """Pad the instances to a given length in batch."""
@@ -406,52 +403,32 @@ class KAGReader(DialogReader):
             for i in range(given_len - cur_len):
                 inst_data.append(pad_item)
 
-        inst_data = np.array(inst_data)
+        inst_data = np.array(inst_data, dtype="int64")
         # 4d
-        return inst_data.astype("int64").reshape([-1, self.max_knowledge_num, given_len, 3])
+        return inst_data.reshape([-1, self.max_knowledge_num, given_len, 3])
 
     def _pad_batch_records_for_training(self, batch_records):
         """Pad batch records and mask for KAG training."""
         batch = {}
 
-        batch_data_id = [record.data_id for record in batch_records]
-        batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
+        batch["data_id"] = np.array([record.data_id for record in batch_records], dtype="int64")
 
-        # token_ids, [n, len, 1]
-        dual_src_batch_token_ids = [record.dual_src_token_ids for record in batch_records]
-        # [n * k, len, 1]
-        dual_knowledge_batch_token_ids = self._get_batch_knowledge_ids(batch_records, "token_ids")
         # [n, k, len, 1]
         single_batch_token_ids = self._get_batch_single_item(batch_records, "token_ids")
-        # type_ids
-        dual_src_batch_type_ids = [record.dual_src_type_ids for record in batch_records]
-        dual_knowledge_batch_type_ids = self._get_batch_knowledge_ids(batch_records, "type_ids")
-        single_batch_type_ids =  self._get_batch_single_item(batch_records, "type_ids")
-        # pos_ids
-        dual_src_batch_pos_ids = [record.dual_src_pos_ids for record in batch_records]
-        dual_knowledge_batch_pos_ids = self._get_batch_knowledge_ids(batch_records, "pos_ids")
-        single_batch_pos_ids = self._get_batch_single_item(batch_records, "pos_ids")
-
-        if self.use_role:
-            dual_src_batch_role_ids = [record.dual_src_role_ids for record in batch_records]
-            dual_knowledge_batch_role_ids = self._get_batch_knowledge_ids(batch_records, "role_ids")
-            single_batch_role_ids = self._get_batch_single_item(batch_records, "role_ids")
 
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
-        batch_tgt_mask_pos = [record.tgt_mask_pos for record in batch_records]
-        batch_exact_k_lens = [record.exact_k_len for record in batch_records]
 
         batch_size = len(batch_records)
         tgt_label, tgt_idx = self._mask_batch_as_list_for_topk_gen(
             batch_size=batch_size,
-            exact_k_lens=batch_exact_k_lens,
+            exact_k_lens=[record.exact_k_len for record in batch_records],
             batch_tokens=single_batch_token_ids,
             vocab_size=self.vocab_size,
             bos_id=self.bos_id,
             eos_id=self.eos_id,
             mask_id=self.mask_id,
             batch_mask_start_pos=batch_tgt_start_idx,
-            batch_tgt_mask_pos=batch_tgt_mask_pos)
+            batch_tgt_mask_pos=[record.tgt_mask_pos for record in batch_records])
 
         flatten_batch_tgt_start_idx = [j for i in batch_tgt_start_idx for j in i]
         batch["single_attention_mask"] = self._gen_self_attn_mask(single_batch_token_ids, batch_tgt_start_idx=flatten_batch_tgt_start_idx)
@@ -461,10 +438,10 @@ class KAGReader(DialogReader):
         batch["tgt_idx"] = self._pad_batch_data_to_len_for_topk(tgt_idx, pad_id=self.pad_id, given_len=given_len)
 
         batch["single_token_ids"] = pad_batch_data(single_batch_token_ids, pad_id=self.pad_id)
-        batch["single_type_ids"] = pad_batch_data(single_batch_type_ids, pad_id=self.pad_id)
-        batch["single_pos_ids"] = pad_batch_data(single_batch_pos_ids, pad_id=self.pad_id)
+        batch["single_type_ids"] = pad_batch_data(self._get_batch_single_item(batch_records, "type_ids"), pad_id=0)
+        batch["single_pos_ids"] = pad_batch_data(self._get_batch_single_item(batch_records, "pos_ids"), pad_id=0)
         if self.use_role:
-            batch["single_role_ids"] = pad_batch_data(single_batch_role_ids, pad_id=self.pad_id)
+            batch["single_role_ids"] = pad_batch_data(self._get_batch_single_item(batch_records, "role_ids"), pad_id=0)
 
         max_len = to_optimized_size(max(map(len, single_batch_token_ids)))
         batch["tgt_label"] = batch["tgt_label"].reshape([-1, self.max_knowledge_num, given_len, 1])
@@ -476,15 +453,17 @@ class KAGReader(DialogReader):
             batch["single_role_ids"] = batch["single_role_ids"].reshape([-1, self.max_knowledge_num, max_len, 1])
 
         # for dual
-        batch["dual_src_token_ids"] = pad_batch_data(dual_src_batch_token_ids, pad_id=self.pad_id)
-        batch["dual_knowledge_token_ids"] = pad_batch_data(dual_knowledge_batch_token_ids, pad_id=self.pad_id)
-        batch["dual_src_type_ids"] = pad_batch_data(dual_src_batch_type_ids, pad_id=self.pad_id)
-        batch["dual_knowledge_type_ids"] = pad_batch_data(dual_knowledge_batch_type_ids, pad_id=self.pad_id)
-        batch["dual_src_pos_ids"] = pad_batch_data(dual_src_batch_pos_ids, pad_id=self.pad_id)
-        batch["dual_knowledge_pos_ids"] = pad_batch_data(dual_knowledge_batch_pos_ids, pad_id=self.pad_id)
+        # token_ids, [n, len, 1]
+        batch["dual_src_token_ids"] = pad_batch_data([record.dual_src_token_ids for record in batch_records], pad_id=self.pad_id)
+        # [n * k, len, 1]
+        batch["dual_knowledge_token_ids"] = pad_batch_data(self._get_batch_knowledge_ids(batch_records, "token_ids"), pad_id=self.pad_id)
+        batch["dual_src_type_ids"] = pad_batch_data([record.dual_src_type_ids for record in batch_records], pad_id=0)
+        batch["dual_knowledge_type_ids"] = pad_batch_data(self._get_batch_knowledge_ids(batch_records, "type_ids"), pad_id=0)
+        batch["dual_src_pos_ids"] = pad_batch_data([record.dual_src_pos_ids for record in batch_records], pad_id=0)
+        batch["dual_knowledge_pos_ids"] = pad_batch_data(self._get_batch_knowledge_ids(batch_records, "pos_ids"), pad_id=0)
         if self.use_role:
-            batch["dual_src_role_ids"] = pad_batch_data(dual_src_batch_role_ids, pad_id=self.pad_id)
-            batch["dual_knowledge_role_ids"] = pad_batch_data(dual_knowledge_batch_role_ids, pad_id=self.pad_id)
+            batch["dual_src_role_ids"] = pad_batch_data([record.dual_src_role_ids for record in batch_records], pad_id=0)
+            batch["dual_knowledge_role_ids"] = pad_batch_data(self._get_batch_knowledge_ids(batch_records, "role_ids"), pad_id=0)
         batch["dual_src_attention_mask"] = self._gen_self_attn_mask(dual_src_batch_token_ids, is_unidirectional=False)
         batch["dual_knowledge_attention_mask"] = self._gen_self_attn_mask(dual_knowledge_batch_token_ids, is_unidirectional=False)
 

@@ -31,9 +31,9 @@ def setup_args():
     parser.add_argument("--output_file", type=str, required=True,
                         help="The path of output: numerical file.")
     parser.add_argument("--use_role", type=str2bool, default=False,
-                        help="Whether use role embeddings.")
+                        help="Whether to use role embeddings.")
     parser.add_argument("--use_turn", type=str2bool, default=False,
-                        help="Whether use turn embeddings.")
+                        help="Whether to use turn embeddings.")
 
     args = parse_args(parser)
     return args

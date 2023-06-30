@@ -33,8 +33,12 @@ from knover.utils import check_cuda, parse_args, str2bool
 def setup_args():
     """Setup arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_distributed", type=str2bool, default=False)
-    parser.add_argument("--port", type=int, default=18123)
+    parser.add_argument("--is_distributed", type=str2bool, default=False,
+                        help="Whether to run distributed inference.")
+    parser.add_argument("--debug", type=str2bool, default=False,
+                        help="Whether to run server in debug mode.")
+    parser.add_argument("--port", type=int, default=18123,
+                        help="Launch sockets start from the given port. User inputs are transfered by socket.")
 
     models.add_cmdline_args(parser)
     DialogGeneration.add_cmdline_args(parser)

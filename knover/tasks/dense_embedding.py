@@ -39,6 +39,6 @@ class DenseEmbedding(Task):
 
     def _post_process_infer_output(self, predictions):
         """Post-process inference output."""
-        predictions = [{"data_id": data_id.tolist()[0], "emb": emb.tolist()}
+        predictions = [{"data_id": data_id.tolist(), "emb": emb.tolist()}
                     for data_id, emb in zip(predictions["data_id"], predictions["emb"])]
         return predictions

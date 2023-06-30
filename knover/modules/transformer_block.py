@@ -48,12 +48,12 @@ def gen_cache(x, d_key, d_value, n_head, topo=None):
     num_splits = topo.mp_info.size if topo is not None else 1
     k = layers.fill_constant_batch_size_like(
         input=x,
-        shape=[-1, 0, d_key * n_head // num_splits],
+        shape=[-1, n_head // num_splits, 0, d_key],
         dtype="float32",
         value=0)
     v = layers.fill_constant_batch_size_like(
         input=x,
-        shape=[-1, 0, d_value * n_head // num_splits],
+        shape=[-1, n_head // num_splits, 0, d_value],
         dtype="float32",
         value=0)
     return k, v
@@ -191,6 +191,10 @@ def multi_head_attention(queries,
     if topo is not None and topo.mp_info.size > 1:
         n_head = n_head // topo.mp_info.size
 
+    q = __split_heads(q, n_head)
+    k = __split_heads(k, n_head)
+    v = __split_heads(v, n_head)
+
     if cache is not None:  # use cache and concat time steps
         # Since the inplace reshape in __split_heads changes the shape of k and
         # v, which is the cache input for next time step, reshape the cache
@@ -202,11 +206,9 @@ def multi_head_attention(queries,
         else:
             select_k, select_v = cache_k, cache_v
 
-        select_k = layers.reshape(select_k, shape=[0, 0, d_key * n_head])
-        select_v = layers.reshape(select_v, shape=[0, 0, d_value * n_head])
         if store:
-            k = layers.concat([select_k, k], axis=1) 
-            v = layers.concat([select_v, v], axis=1)
+            k = layers.concat([select_k, k], axis=2)
+            v = layers.concat([select_v, v], axis=2)
             layers.assign(k, cache["k"])
             layers.assign(v, cache["v"])
         else:
@@ -214,12 +216,8 @@ def multi_head_attention(queries,
             assert False
             layers.assign(select_k, cache["k"])
             layers.assign(select_v, cache["v"])
-            k = layers.concat([select_k, k], axis=1)
-            v = layers.concat([select_v, v], axis=1)
-
-    q = __split_heads(q, n_head)
-    k = __split_heads(k, n_head)
-    v = __split_heads(v, n_head)
+            k = layers.concat([select_k, k], axis=2)
+            v = layers.concat([select_v, v], axis=2)
 
     ctx_multiheads = __scaled_dot_product_attention(q, k, v, attn_bias, d_key, dropout_rate)
 
@@ -405,8 +403,8 @@ def encoder_layer(enc_input,
         attn_output,
         postprocess_cmd,
         prepostprocess_dropout,
-        name=name + "_post_att",
-        epsilon=epsilon)
+        epsilon=epsilon,
+        name=name + "_post_att")
     ffd_output = positionwise_feed_forward(
         pre_process_layer(
             attn_output,
@@ -426,8 +424,8 @@ def encoder_layer(enc_input,
         ffd_output,
         postprocess_cmd,
         prepostprocess_dropout,
-        name=name + "_post_ffn",
-        epsilon=epsilon)
+        epsilon=epsilon,
+        name=name + "_post_ffn")
     return ffd_output, [ffd_output]
 
 
@@ -447,14 +445,14 @@ def encoder(enc_input,
             preprocess_cmd="n",
             postprocess_cmd="da",
             param_initializer=None,
-            name="encoder",
             epsilon=1e-5,
             n_layer_per_block=1,
             param_share="normal",
             caches=None,
             gather_idx=None,
             store=False,
-            topo=None):
+            topo=None,
+            name="encoder"):
     """A Transformer Encoder.
 
     The encoder is composed of a stack of identical layers returned by calling
@@ -475,8 +473,8 @@ def encoder(enc_input,
         enc_input,
         pre_encoder_cmd,
         prepostprocess_dropout,
-        name=f"pre_{name}",
-        epsilon=epsilon)
+        epsilon=epsilon,
+        name=f"pre_{name}")
     for i in range(n_layer):
         enc_output, cps = encoder_layer(
             enc_input,
@@ -505,7 +503,7 @@ def encoder(enc_input,
         enc_output,
         preprocess_cmd,
         prepostprocess_dropout,
-        name=f"post_{name}",
-        epsilon=epsilon)
+        epsilon=epsilon,
+        name=f"post_{name}")
 
     return enc_output, checkpoints

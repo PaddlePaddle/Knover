@@ -39,6 +39,7 @@ fleetrun \
     --in_tokens ${in_tokens:-"true"} \
     --batch_size ${batch_size:-8192} \
     --use_sharding ${use_sharding:-"false"} \
+    --log_steps ${log_steps} \
     --save_path ${save_path}
 exit_code=$?
 

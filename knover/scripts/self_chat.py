@@ -23,16 +23,23 @@ from termcolor import colored
 
 import knover.models as models
 from knover.tasks.dialog_generation import DialogGeneration
-from knover.utils import check_cuda, parse_args
+from knover.utils import check_cuda, parse_args, str2bool
 
 
 def setup_args():
     """Setup self-chat arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--in_file", type=str, default=None)
-    parser.add_argument("--out_file", type=str, default=None)
-    parser.add_argument("--num_episode", type=int, default=10)
-    parser.add_argument("--num_turn", type=int, default=10)
+    parser.add_argument("--debug", type=str2bool, default=False,
+                        help="Whether to run self-chat in debug mode.")
+    parser.add_argument("--in_file", type=str, default=None,
+                        help="If given, the input file contains the first utterance in each self-chat episode.")
+    parser.add_argument("--out_file", type=str, default=None,
+                        help="If given, the self-chat result will save in the output file in json format.")
+    parser.add_argument("--num_episode", type=int, default=10,
+                        help="If the input file is not given, self-chat will start with 'Hi!' and "
+                        "run self-chat the given number of epsidoe repeatedly.")
+    parser.add_argument("--num_turn", type=int, default=10,
+                        help="The number of turn in each episode.")
 
     models.add_cmdline_args(parser)
     DialogGeneration.add_cmdline_args(parser)
@@ -59,9 +66,9 @@ def self_chat(args):
                 for i, utt in enumerate(context):
                     if args.use_role:
                         if (len(context) - i) % 2 == 0:
-                            src.append(f"{utt}\1{0}")
+                            src.append(f"{utt}\x01{0}")
                         else:
-                            src.append(f"{utt}\1{1}")
+                            src.append(f"{utt}\x01{1}")
                     else:
                         src.append(utt)
                 src = " [SEP] ".join(src)

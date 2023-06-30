@@ -31,11 +31,18 @@ from knover.utils import check_cuda, parse_args, str2bool, Timer
 def setup_args():
     """Setup inference arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_distributed", type=str2bool, default=False)
-    parser.add_argument("--save_path", type=str, default="output")
-    parser.add_argument("--infer_file", type=str, required=True)
-    parser.add_argument("--output_name", type=str, required=True)
-    parser.add_argument("--log_steps", type=int, default=1)
+    parser.add_argument("--is_distributed", type=str2bool, default=False,
+                        help="Whether to run distributed inference.")
+    parser.add_argument("--debug", type=str2bool, default=False,
+                        help="Whether to run inference in debug mode.")
+    parser.add_argument("--save_path", type=str, default="output",
+                        help="The path to save inference result.")
+    parser.add_argument("--infer_file", type=str, required=True,
+                        help="The input data of inference.")
+    parser.add_argument("--output_name", type=str, required=True,
+                        help="The name of saved fields, separated by comma.")
+    parser.add_argument("--log_steps", type=int, default=100,
+                        help="Display inference log information every X steps.")
 
     models.add_cmdline_args(parser)
     tasks.add_cmdline_args(parser)

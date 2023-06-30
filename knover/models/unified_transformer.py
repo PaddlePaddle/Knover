@@ -37,7 +37,7 @@ class UnifiedTransformer(Model):
         group.add_argument("--mem_efficient", type=str2bool, default=False,
                            help="Whether to run in memory efficient mode.")
         group.add_argument("--use_role", type=str2bool, default=False,
-                           help="Whether use role embeddings.")
+                           help="Whether to use role embeddings.")
 
         Generator.add_cmdline_args(parser)
         return group
@@ -109,7 +109,7 @@ class UnifiedTransformer(Model):
         """Generate input embeddings of Transformer
 
         Args:
-            tokens_ids: represents the token id of each token, shape is [batch_size, max_seq_len, 1]
+            token_ids: represents the token id of each token, shape is [batch_size, max_seq_len, 1]
             type_ids: represents the type of each token, shape is [batch_size, max_seq_len, 1]
             pos_ids: represents the position of each token, shape is [batch_size, max_seq_len, 1]
             input_mask: represents the attention masking mastrix in each Transformer blocks,
@@ -308,11 +308,11 @@ class UnifiedTransformer(Model):
             param_initializer=self.param_initializer,
             epsilon=self.epsilon,
             n_layer_per_block=self.n_layer_per_block,
-            name=name,
             caches=caches,
             gather_idx=gather_idx,
             store=caches is not None,
-            topo=self.topo
+            topo=self.topo,
+            name=name
         )
 
     def _calc_logits(self, enc_out, tgt_idx=None, name=""):
@@ -379,31 +379,28 @@ class UnifiedTransformer(Model):
             feed_dict: A feed dict mapping keys to feed input variable.
         """
         feed_dict = {}
-        feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+        feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, -1, 1], dtype="int64")
+        feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, -1, 1], dtype="int64")
+        feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, -1, 1], dtype="int64")
 
         if self.use_role:
-            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["generation_mask"] = layers.data(
-            name="generation_mask",
-            shape=[-1, self.max_seq_len, self.max_seq_len],
-            dtype=self.dtype)
+            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, -1, 1], dtype="int64")
+        feed_dict["generation_mask"] = layers.data(name="generation_mask", shape=[-1, -1, -1], dtype=self.dtype)
 
         if is_infer:
             if self.do_generation:
-                feed_dict["tgt_ids"] = layers.data(
-                    name="tgt_ids", shape=[-1, 1, 1], dtype="int64")
-                feed_dict["tgt_pos"] = layers.data(
-                    name="tgt_pos", shape=[-1, 1, 1], dtype="int64")
-                feed_dict["init_score"] = layers.data(name="init_score", shape=[-1, 1], dtype=self.dtype)
-                feed_dict["parent_idx"] = layers.data(name="parent_idx", shape=[-1], dtype="int64")
+                feed_dict["tgt_ids"] = layers.data(name="tgt_ids", shape=[-1, 1], dtype="int64")
+                feed_dict["tgt_type"] = layers.data(name="tgt_type", shape=[-1, 1], dtype="int64")
+                feed_dict["tgt_pos"] = layers.data(name="tgt_pos", shape=[-1, 1], dtype="int64")
+
+                if self.use_role:
+                    feed_dict["tgt_role"] = layers.data(name="tgt_role", shape=[-1, 1], dtype="int64")
                 feed_dict["tgt_generation_mask"] = layers.data(
-                    name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len], dtype=self.dtype)
+                    name="tgt_generation_mask", shape=[-1, 1, -1], dtype=self.dtype)
             else:
                 feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
                 feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
-            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1], dtype="int64")
         else:
             feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
             feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
@@ -447,6 +444,8 @@ class UnifiedTransformer(Model):
         mean_tgt_lm_loss = layers.mean(tgt_lm_loss)
         metrics["token_lm_loss"] = mean_tgt_lm_loss
 
+        metrics["acc"] = layers.accuracy(tgt_logits, inputs["tgt_label"])
+
         loss = mean_tgt_lm_loss
         metrics["loss"] = loss
         return metrics
@@ -460,10 +459,7 @@ class UnifiedTransformer(Model):
         return statistics
 
     def infer(self, inputs, outputs):
-        """Run model inference.
-
-        Only support generation now.
-        """
+        """Run model inference."""
         if self.do_generation:
             return self.generator.inference(self, inputs, outputs)
         else:
@@ -498,14 +494,16 @@ class UnifiedTransformer(Model):
 
     def _initialize_state(self, inputs, step_idx):
         state = {}
-        state["tgt_ids"] = layers.array_write(layers.reshape(inputs["tgt_ids"], [-1, 1]), step_idx)
-        state["tgt_pos"] = inputs["tgt_pos"]
-        init_score = inputs["init_score"]
-        if self.dtype == "float16":
-            init_score = layers.cast(init_score, "float32")
+        state["tgt_ids"] = layers.array_write(inputs["tgt_ids"], step_idx)
+        state["tgt_type"] = layers.unsqueeze(inputs["tgt_type"], [-1])
+        state["tgt_pos"] = layers.unsqueeze(inputs["tgt_pos"], [-1])
+        if self.use_role:
+            state["tgt_role"] = layers.unsqueeze(inputs["tgt_role"], [-1])
+        state["bsz"] = bsz = layers.shape(inputs["tgt_ids"])[0]
+        init_score = layers.fill_constant([bsz], "float32", 0.0)
         state["scores"] = layers.array_write(init_score, step_idx)
         state["tgt_generation_mask"] = inputs["tgt_generation_mask"]
-        state["is_finished"] = layers.fill_constant_batch_size_like(init_score, [-1, 1], "float32", 0)
+        state["is_finished"] = layers.fill_constant([bsz, 1], "float32", 0)
         return state
 
     def _prepare_timestep_input(self, state, step_idx):
@@ -515,31 +513,29 @@ class UnifiedTransformer(Model):
 
         # token ids
         pre_ids = layers.array_read(array=state["tgt_ids"], i=step_idx)
-        model_input["token_ids"] = layers.unsqueeze(pre_ids, 1)
+        model_input["token_ids"] = layers.reshape(pre_ids, [-1, 1, 1])
+
+        def __get__(key):
+            value = state[key]
+            if "parent_idx" in state:
+                value = layers.gather(value, state["parent_idx"])
+                layers.assign(value, state[key])
+            return value
 
         # position ids
-        pre_pos = state["tgt_pos"]
-        if "parent_idx" in state:
-            pre_pos = layers.gather(pre_pos, state["parent_idx"])
-        pre_pos = layers.reshape(pre_pos, [-1, 1, 1])
-        model_input["pos_ids"] = pre_pos
+        model_input["type_ids"] = __get__("tgt_type")
+        model_input["pos_ids"] = __get__("tgt_pos")
+        if self.use_role:
+            model_input["role_ids"] = __get__("tgt_role")
 
         pre_scores = layers.array_read(array=state["scores"], i=step_idx)
 
         # generation_mask
-        tgt_generation_mask = state["tgt_generation_mask"]
-        if "parent_idx" in state:
-            tgt_generation_mask = layers.gather(tgt_generation_mask, state["parent_idx"])
+        tgt_generation_mask = __get__("tgt_generation_mask")
         append_mask = layers.unsqueeze(1 - state["is_finished"], [2])
         if self.dtype == "float16":
             append_mask = layers.cast(append_mask, self.dtype)
-        tgt_generation_mask = layers.concat([tgt_generation_mask, append_mask], axis=2)
-
-        model_input["generation_mask"] = pre_mask = tgt_generation_mask
-
-        model_input["type_ids"] = layers.fill_constant_batch_size_like(pre_mask, [-1, 1, 1], "int64", 1)
-        if self.use_role:
-            model_input["role_ids"] = layers.fill_constant_batch_size_like(pre_mask, [-1, 1, 1], "int64", 0)
+        model_input["generation_mask"] = layers.concat([tgt_generation_mask, append_mask], axis=2)
 
         return model_input, pre_ids, pre_scores
 
@@ -572,7 +568,6 @@ class UnifiedTransformer(Model):
     def _run_generation(self, inputs):
         """Run generation."""
         batch_size = self._get_batch_size(inputs)
-        inputs["parent_idx"] = np.array(range(batch_size), dtype="int64")
         outputs = self._execute(
             self.infer_program,
             inputs,
@@ -580,7 +575,7 @@ class UnifiedTransformer(Model):
             return_numpy=False)
 
         predictions = []
-        data_id_list = np.array(outputs["data_id"]).reshape(-1).tolist()
+        data_id_list = np.array(outputs["data_id"]).tolist()
         token_ids_list = np.array(outputs["token_ids"]).squeeze(2).tolist()
         seq_ids = outputs["finished_ids"]
         seq_ids_np  = np.array(outputs["finished_ids"])

@@ -24,7 +24,7 @@ class Task(ABC):
     """Basic task."""
 
     def __init__(self, args):
-        self.debug_mode = False
+        self._debug_mode = args.get("debug", False)
         return
 
     def train_step(self, model: Model, inputs):
@@ -93,8 +93,3 @@ class Task(ABC):
         """
         generator = self.reader.data_generator(*args, is_infer=is_infer, **kwargs)
         return model.get_data_loader(generator, is_infer)
-
-    def debug(self, debug_mode=True):
-        """Switch debug mode."""
-        self.debug_mode = debug_mode
-        return

@@ -99,6 +99,8 @@ class Model(ABC):
     def __init__(self, args, place):
         self.args = args
 
+        self._debug_mode = args.get("debug", False)
+
         self.place = place
 
         self.init_checkpoint = args.init_checkpoint

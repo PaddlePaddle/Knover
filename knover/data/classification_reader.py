@@ -18,7 +18,7 @@ from collections import namedtuple
 import numpy as np
 
 from knover.data.dialog_reader import DialogReader
-from knover.utils import pad_batch_data, str2bool
+from knover.utils import pad_batch_data
 
 
 class ClassificationReader(DialogReader):
@@ -75,24 +75,17 @@ class ClassificationReader(DialogReader):
     def _pad_batch_records(self, batch_records, is_infer, phase=None):
         """Padding a batch of records and construct model's inputs."""
         batch = {}
-        batch_token_ids = [record.token_ids for record in batch_records]
-        batch_type_ids = [record.type_ids for record in batch_records]
-        batch_pos_ids = [record.pos_ids for record in batch_records]
-        batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
+        batch["token_ids"] = pad_batch_data([record.token_ids for record in batch_records], pad_id=self.pad_id)
+        batch["type_ids"] = pad_batch_data([record.type_ids for record in batch_records], pad_id=0)
+        batch["pos_ids"] = pad_batch_data([record.pos_ids for record in batch_records], pad_id=0)
         if self.use_role:
-            batch_role_ids = [record.role_ids for record in batch_records]
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
+            batch["role_ids"] = pad_batch_data([record.role_ids for record in batch_records], pad_id=0)
 
-        attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
-        batch["attention_mask"] = attention_mask
+        batch["attention_mask"] = self._gen_self_attn_mask(batch["token_ids"], is_unidirectional=False)
 
         if not is_infer:
-            batch_label = [record.label for record in batch_records]
-            batch["label"] = np.array(batch_label).astype("int64").reshape([-1, 1])
+            batch["label"] = np.array([record.label for record in batch_records], dtype="int64").reshape([-1, 1])
         else:
-            batch_data_id = [record.data_id for record in batch_records]
-            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
+            batch["data_id"] = np.array([record.data_id for record in batch_records], dtype="int64")
 
         return batch

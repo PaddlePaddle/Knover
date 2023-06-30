@@ -36,6 +36,8 @@ def setup_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--is_distributed", type=str2bool, default=False,
                         help="Whether to run distributed training.")
+    parser.add_argument("--debug", type=str2bool, default=False,
+                        help="Whether to run training in debug mode.")
     parser.add_argument("--save_path", type=str, default="output",
                         help="The path where to save models.")
     parser.add_argument("--train_file", type=str, required=True,
@@ -55,8 +57,8 @@ def setup_args():
     parser.add_argument("--validation_steps", type=int, default=1000,
                         help="Run validation every X training steps.")
     parser.add_argument("--save_steps", type=int, default=0,
-                        help="Save the lastest model every X training steps. "
-                        "If `save_steps = 0`, then it only keep the lastest checkpoint.")
+                        help="Save the latest model every X training steps. "
+                        "If `save_steps = 0`, then it only keep the latest checkpoint.")
     parser.add_argument("--eval_metric", type=str, default="-loss",
                         help="Keep the checkpoint with best evaluation metric.")
     parser.add_argument("--save_checkpoint", type=str2bool, default=True,
@@ -67,7 +69,6 @@ def setup_args():
     tasks.add_cmdline_args(parser)
 
     args = parse_args(parser)
-    args.load(args.config_path, "Model")
     args.display()
     return args
 
@@ -160,24 +161,24 @@ def train(args):
             print("\t" + ", ".join(f"{k}: {v:.4f}" for k, v in metrics.items()))
             timer.reset()
 
+        if args.save_steps > 0 and step % args.save_steps == 0:
+            save_model(model, args.save_path, f"step_{step}", dev_count, gpu_id, args)
+
         if step % args.validation_steps == 0:
             for valid_tag, valid_generator in zip(valid_tags, valid_generators):
                 eval_metrics = evaluate(task, model, valid_generator, args, dev_count, gpu_id, step, tag=valid_tag)
                 if valid_tag == "valid":
                     valid_metrics = eval_metrics
 
-            # save lastest model
+            # save latest model
             if args.save_steps <= 0:
-                save_model(model, args.save_path, "lastest", dev_count, gpu_id, args)
+                save_model(model, args.save_path, "latest", dev_count, gpu_id, args)
             # maintain best metric (update)
             if valid_metrics[eval_metric] * scale > best_metric:
                 best_metric = valid_metrics[eval_metric] * scale
                 print(f"Get better valid metric: {eval_metric} = {valid_metrics[eval_metric]}")
                 # save best model (with best evaluation metric)
                 save_model(model, args.save_path, "best", dev_count, gpu_id, args)
-
-        if args.save_steps > 0 and step % args.save_steps == 0:
-            save_model(model, args.save_path, f"step_{step}", dev_count, gpu_id, args)
 
         timer.start()
     print("Training is completed.")

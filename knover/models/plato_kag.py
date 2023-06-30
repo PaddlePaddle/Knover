@@ -53,47 +53,47 @@ class PlatoKAG(UnifiedTransformer):
         feed_dict = {}
         # dual src, [batch_size, max_seq_len, 1]
         feed_dict["dual_src_token_ids"] = layers.data(
-            name="dual_src_token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            name="dual_src_token_ids", shape=[-1, -1, 1], dtype="int64")
         feed_dict["dual_src_type_ids"] = layers.data(
-            name="dual_src_type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            name="dual_src_type_ids", shape=[-1, -1, 1], dtype="int64")
         feed_dict["dual_src_pos_ids"] = layers.data(
-            name="dual_src_pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            name="dual_src_pos_ids", shape=[-1, -1, 1], dtype="int64")
         # dual knowledge, [batch_size * max_knowledge_num, max_seq_len, 1]
         feed_dict["dual_knowledge_token_ids"] = layers.data(
-            name="dual_knowledge_token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            name="dual_knowledge_token_ids", shape=[-1, -1, 1], dtype="int64")
         feed_dict["dual_knowledge_type_ids"] = layers.data(
-            name="dual_knowledge_type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            name="dual_knowledge_type_ids", shape=[-1, -1, 1], dtype="int64")
         feed_dict["dual_knowledge_pos_ids"] = layers.data(
-            name="dual_knowledge_pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            name="dual_knowledge_pos_ids", shape=[-1, -1, 1], dtype="int64")
         # generation, [batch_size, max_knowledge_num, max_seq_len, 1]
         feed_dict["single_token_ids"] = layers.data(
-            name="single_token_ids", shape=[-1, self.max_knowledge_num, self.max_seq_len, 1], dtype="int64")
+            name="single_token_ids", shape=[-1, self.max_knowledge_num, -1, 1], dtype="int64")
         feed_dict["single_type_ids"] = layers.data(
-            name="single_type_ids", shape=[-1, self.max_knowledge_num, self.max_seq_len, 1], dtype="int64")
+            name="single_type_ids", shape=[-1, self.max_knowledge_num, -1, 1], dtype="int64")
         feed_dict["single_pos_ids"] = layers.data(
-            name="single_pos_ids", shape=[-1, self.max_knowledge_num, self.max_seq_len, 1], dtype="int64")
+            name="single_pos_ids", shape=[-1, self.max_knowledge_num, -1, 1], dtype="int64")
 
         if self.use_role:
             feed_dict["dual_src_role_ids"] = layers.data(
-                name="dual_src_role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+                name="dual_src_role_ids", shape=[-1, -1, 1], dtype="int64")
             feed_dict["dual_knowledge_role_ids"] = layers.data(
-                name="dual_knowledge_role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+                name="dual_knowledge_role_ids", shape=[-1, -1, 1], dtype="int64")
             feed_dict["single_role_ids"] = layers.data(
-                name="single_role_ids", shape=[-1, self.max_knowledge_num, self.max_seq_len, 1], dtype="int64")
+                name="single_role_ids", shape=[-1, self.max_knowledge_num, -1, 1], dtype="int64")
 
         feed_dict["single_attention_mask"] = layers.data(
             name="single_attention_mask",
-            shape=[-1, self.max_knowledge_num, self.max_seq_len, self.max_seq_len],
+            shape=[-1, self.max_knowledge_num, -1, -1],
             dtype=self.dtype)
 
         feed_dict["dual_src_attention_mask"] = layers.data(
             name="dual_src_attention_mask",
-            shape=[-1, self.max_seq_len, self.max_seq_len],
+            shape=[-1, -1, -1],
             dtype=self.dtype)
 
         feed_dict["dual_knowledge_attention_mask"] = layers.data(
             name="dual_knowledge_attention_mask",
-            shape=[-1, self.max_seq_len, self.max_seq_len],
+            shape=[-1, -1, -1],
             dtype=self.dtype)
 
         # [batch_size, max_knowledge_num, max_seq_len, 1]
@@ -103,7 +103,7 @@ class PlatoKAG(UnifiedTransformer):
         feed_dict["tgt_idx"] = layers.data(
             name="tgt_idx", shape=[-1, self.max_knowledge_num, self.max_mask_len, 3], dtype="int64")
 
-        feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+        feed_dict["data_id"] = layers.data(name="data_id", shape=[-1], dtype="int64")
 
         return feed_dict
 
@@ -124,7 +124,7 @@ class PlatoKAG(UnifiedTransformer):
         feed_dict["attention_mask"] = layers.data(
             name="attention_mask", shape=[-1, self.max_seq_len, self.max_seq_len], dtype=self.dtype)
 
-        feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+        feed_dict["data_id"] = layers.data(name="data_id", shape=[-1], dtype="int64")
         return feed_dict
 
     def _get_feed_dict(self, is_infer=False):

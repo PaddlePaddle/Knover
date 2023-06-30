@@ -28,6 +28,9 @@ class NSPReader(DialogReader):
     def add_cmdline_args(cls, parser):
         """Add cmdline arguments."""
         group = DialogReader.add_cmdline_args(parser)
+        group.add_argument("--attention_style", type=str, default="bidirectional",
+                           choices=["bidirectional", "unidirectional"],
+                           help="The attention style of NSP model.")
         group.add_argument("--mix_negative_sample", type=str2bool, default=False,
                            help="Whether to mix random negative samples into dataset.")
         group.add_argument("--neg_pool_size", type=int, default=2 ** 16,
@@ -39,6 +42,8 @@ class NSPReader(DialogReader):
         self.fields.append("label")
         self.Record = namedtuple("Record", self.fields, defaults=(None,) * len(self.fields))
 
+        self.use_mlm = args.get("use_mlm", True)
+        self.attention_style = args.attention_style
         self.mix_negative_sample = args.mix_negative_sample
         self.neg_pool_size = args.neg_pool_size
         return
@@ -111,41 +116,49 @@ class NSPReader(DialogReader):
         """Padding a batch of records and construct model's inputs."""
         batch = {}
         batch_token_ids = [record.token_ids for record in batch_records]
-        batch_type_ids = [record.type_ids for record in batch_records]
-        batch_pos_ids = [record.pos_ids for record in batch_records]
-        if self.use_role:
-            batch_role_ids = [record.role_ids for record in batch_records]
         batch_tgt_start_idx = [record.tgt_start_idx for record in batch_records]
         batch_label = [record.label for record in batch_records]
 
-        batch_mask_token_ids, tgt_label, tgt_idx, label_idx = mask(
-            batch_tokens=batch_token_ids,
-            vocab_size=self.vocab_size,
-            bos_id=self.bos_id,
-            eos_id=self.eos_id,
-            mask_id=self.mask_id,
-            tgt_starts=batch_tgt_start_idx,
-            labels=batch_label,
-            is_unidirectional=False)
-        if not is_infer:
-            batch_token_ids = batch_mask_token_ids
-        batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
-        batch["type_ids"] = pad_batch_data(batch_type_ids, pad_id=0)
-        batch["pos_ids"] = pad_batch_data(batch_pos_ids, pad_id=0)
+        batch["type_ids"] = pad_batch_data([record.type_ids for record in batch_records], pad_id=0)
+        batch["pos_ids"] = pad_batch_data([record.pos_ids for record in batch_records], pad_id=0)
         if self.use_role:
-            batch["role_ids"] = pad_batch_data(batch_role_ids, pad_id=0)
-        attention_mask = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
+            batch["role_ids"] = pad_batch_data([record.role_ids for record in batch_records], pad_id=0)
 
-        batch["attention_mask"] = attention_mask
+        if self.attention_style == "unidirectional":
+            batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
+            tgt_label, tgt_idx, label_idx = mask(
+                batch_tokens=batch_token_ids,
+                vocab_size=self.vocab_size,
+                bos_id=self.bos_id,
+                tgt_starts=batch_tgt_start_idx,
+                labels=batch_label,
+                is_unidirectional=True)
+            batch["attention_mask"] = self._gen_self_attn_mask(batch_token_ids, batch_tgt_start_idx)
+        else:
+            assert self.mask_id is not None, \
+                "The vocabulary doesn't have mask token which is used in NSPReader."
+            batch_mask_token_ids, tgt_label, tgt_idx, label_idx = mask(
+                batch_tokens=batch_token_ids,
+                vocab_size=self.vocab_size,
+                bos_id=self.bos_id,
+                eos_id=self.eos_id,
+                mask_id=self.mask_id,
+                tgt_starts=batch_tgt_start_idx,
+                labels=batch_label,
+                is_unidirectional=False)
+            if not is_infer and self.use_mlm:
+                # use masking token ids in training (when training with MLM loss)
+                batch_token_ids = batch_mask_token_ids
+            batch["token_ids"] = pad_batch_data(batch_token_ids, pad_id=self.pad_id)
+            batch["attention_mask"] = self._gen_self_attn_mask(batch_token_ids, is_unidirectional=False)
+
         batch["label_idx"] = label_idx
 
         if not is_infer:
-            batch_label = np.array(batch_label).astype("int64").reshape([-1, 1])
-            batch["label"] = batch_label
+            batch["label"] = np.array(batch_label, dtype="int64").reshape([-1, 1])
             batch["tgt_label"] = tgt_label
             batch["tgt_idx"] = tgt_idx
         else:
-            batch_data_id = [record.data_id for record in batch_records]
-            batch["data_id"] = np.array(batch_data_id).astype("int64").reshape([-1, 1])
+            batch["data_id"] = np.array([record.data_id for record in batch_records], dtype="int64")
 
         return batch

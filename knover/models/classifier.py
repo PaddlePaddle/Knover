@@ -45,20 +45,19 @@ class Classifier(UnifiedTransformer):
             feed_dict: A feed dict mapping keys to feed input variable.
         """
         feed_dict = {}
-        feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+        feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, -1, 1], dtype="int64")
+        feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, -1, 1], dtype="int64")
+        feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, -1, 1], dtype="int64")
 
         if self.use_role:
-            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
+            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, -1, 1], dtype="int64")
 
-        feed_dict["attention_mask"] = layers.data(
-            name="attention_mask", shape=[-1, self.max_seq_len, self.max_seq_len], dtype=self.dtype)
+        feed_dict["attention_mask"] = layers.data(name="attention_mask", shape=[-1, -1, -1], dtype=self.dtype)
 
         if not is_infer:
             feed_dict["label"] = layers.data(name="label", shape=[-1, 1], dtype="int64")
         else:
-            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1], dtype="int64")
         return feed_dict
 
     def forward(self, inputs, is_infer=False):

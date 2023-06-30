@@ -39,7 +39,10 @@ class DialogGeneration(Task):
         group.add_argument("--is_cn", type=str2bool, default=False,
                            help="Whether to run in Chinese data.")
 
-        group.add_argument("--filter_cross_repetition", type=str2bool, default=True)
+        group.add_argument("--repetition_ngram", type=int, default=3,
+                           help="Detect X-gram repetition.")
+        group.add_argument("--filter_cross_repetition", type=str2bool, default=True,
+                           help="Whether to filter cross turn repetion or not.")
 
         group.add_argument("--nsp_inference_model_path", type=str, default=None,
                            help="The path of NSP inference model which is used to provide the NSP ranking scores.")
@@ -63,6 +66,7 @@ class DialogGeneration(Task):
         super(DialogGeneration, self).__init__(args)
         self.do_generation = args.do_generation
         self.is_cn = args.is_cn
+        self.repetition_ngram = args.repetition_ngram
         self.filter_cross_repetition = args.filter_cross_repetition
 
         # reserve example for inference
@@ -121,7 +125,7 @@ class DialogGeneration(Task):
                 if example is None:
                     words = post_process_context(pred["context_token_ids"], self.reader)
                 elif self.reader.use_role:
-                    words = [self.reader.tokenizer.preprocess(s.split("\1")[0]).split(" ")
+                    words = [self.reader.tokenizer.preprocess(s.split("\x01")[0]).split(" ")
                              for s in example.src.split("[SEP]")]
                 else:
                     words = [self.reader.tokenizer.preprocess(s).split(" ")
@@ -129,11 +133,25 @@ class DialogGeneration(Task):
                 pred_token_ids, pred_words = post_process_response(pred["response_token_ids"], self.reader)
                 num_token = len(pred_token_ids)
 
-                cross_turn_repetition = check_cross_turn_repetition(words, pred_words, self.is_cn)
-                in_turn_repetition = check_in_turn_repetition(pred_words, self.is_cn) \
-                    or check_in_turn_repetition(pred_token_ids)
+                cross_turn_repetition = check_cross_turn_repetition(words, pred_words, self.is_cn, self.repetition_ngram)
+                in_turn_repetition = check_in_turn_repetition(pred_words, self.is_cn, n=self.repetition_ngram) \
+                    or check_in_turn_repetition(pred_token_ids, n=self.repetition_ngram)
 
-                pred["response"] = " ".join(pred_words)
+                if self.is_cn:
+                    response = " ".join(pred_words)
+                    chars = [" "]
+                    for char in response:
+                        if "\u4e00" <= char <= "\u9fa5" and chars[-1] == " ":
+                            # Chinese character
+                            chars[-1] = char
+                        elif "\u4e00" <= chars[-1] <= "\u9fa5" and char == " ":
+                            # Chinese character
+                            pass
+                        else:
+                            chars.append(char)
+                    pred["response"] = "".join(chars).strip()
+                else:
+                    pred["response"] = " ".join(pred_words)
                 pred["score"] = pred[self.ranking_score]
                 if self.max_dec_len is not None and num_token >= self.max_dec_len: # not ending
                     pred["score"] -= 1e3
@@ -143,28 +161,43 @@ class DialogGeneration(Task):
                     pred["score"] -= 1e3
 
             preds = sorted(preds, key=lambda pred: -pred["score"])
-            if self.debug_mode:
-                if example is not None:
-                    print("Example:", example.data_id)
+            if self._debug_mode and example is not None:
+                print("Example:", example.data_id)
+                if "src" in example._fields and example.src != "":
                     print("Context:")
                     context = example.src.split(" [SEP] ")
                     for i, s in enumerate(context):
                         if self.reader.use_role:
-                            if "\1" in s:
-                                s, role_id = s.split("\1")
+                            if "\x01" in s:
+                                s, role_id = s.split("\x01")
                             else:
                                 role_id = (len(context) - i) % 2
                             s = f"{role_id}: {s}"
                         print("\t" + s)
-                    if "knowledge" in example._fields:
-                        print("Knowledge:")
-                        print("\t" + example.knowledge)
+                if "knowledge" in example._fields:
+                    print("Knowledge:")
+                    ks = example.knowledge.split(" [SEP] ")
+                    for i, k in enumerate(ks):
+                        if self.reader.use_role:
+                            if "\x01" in k:
+                                k, role_id = k.split("\x01")
+                            else:
+                                role_id = 0
+                            k = f"{role_id}: {k}"
+                        print("\t" + k)
+                if "tgt" in example._fields:
+                    print("Prompt:")
+                    print("\t" + example.tgt)
                 print("Predictions:")
                 for pred in preds:
                     print(f"\t{pred['response']}\t{pred['score']:.5f}")
             pred = preds[0]
             keep_attr = ["data_id", "score", "response"]
             pred = {k: pred[k] for k in keep_attr}
+            pred["candidates"] = [
+                {"response": item["response"], "score": item["score"]}
+                for item in preds
+            ]
             predictions.append(pred)
         return predictions
 
@@ -176,7 +209,7 @@ class DialogGeneration(Task):
         if self.ranking_score == "ranking_score":
             return [
                 {
-                    "data_id": data_id.tolist()[0],
+                    "data_id": data_id.tolist(),
                     "lm_loss": float(lm_loss),
                     "ppl": math.exp(lm_loss / tokens_num),
                     "tokens_num": int(tokens_num),
@@ -189,7 +222,7 @@ class DialogGeneration(Task):
 
         return [
             {
-                "data_id": data_id.tolist()[0],
+                "data_id": data_id.tolist(),
                 "lm_loss": float(lm_loss),
                 "ppl": math.exp(lm_loss / tokens_num),
                 "tokens_num": int(tokens_num)
@@ -317,7 +350,7 @@ def post_process_response(token_ids, reader, merge=True):
     return token_ids, response
 
 
-def check_cross_turn_repetition(context, pred, is_cn=False):
+def check_cross_turn_repetition(context, pred, is_cn=False, n=3):
     """Check the cross-turn repetition.
 
     Calcuate tri-gram repetition.
@@ -337,19 +370,19 @@ def check_cross_turn_repetition(context, pred, is_cn=False):
             context = ["".join(utt) for utt in context]
             pred = "".join(pred)
 
-    pred_tri_grams = set()
-    for i in range(len(pred) - 2):
-        tri_gram = tuple(pred[i:i + 3])
-        pred_tri_grams.add(tri_gram)
+    pred_ngrams = set()
+    for i in range(len(pred) - n + 1):
+        ngram = tuple(pred[i:i + n])
+        pred_ngrams.add(ngram)
     for utt in context:
-        for i in range(len(utt) - 2):
-            tri_gram = tuple(utt[i:i + 3])
-            if tri_gram in pred_tri_grams:
+        for i in range(len(utt) - n + 1):
+            ngram = tuple(utt[i:i + n])
+            if ngram in pred_ngrams:
                 return True
     return False
 
 
-def check_in_turn_repetition(pred, is_cn=False):
+def check_in_turn_repetition(pred, is_cn=False, n=3):
     """Check the in-turn repetition.
 
     Calcuate tri-gram repetition.
@@ -366,12 +399,12 @@ def check_in_turn_repetition(pred, is_cn=False):
         if is_cn:
             pred = "".join(pred)
 
-    tri_grams = set()
-    for i in range(len(pred) - 2):
-        tri_gram = tuple(pred[i:i + 3])
-        if tri_gram in tri_grams:
+    ngrams = set()
+    for i in range(len(pred) - n + 1):
+        ngram = tuple(pred[i:i + n])
+        if ngram in ngrams:
             return True
-        tri_grams.add(tri_gram)
+        ngrams.add(ngram)
     return False
 
 

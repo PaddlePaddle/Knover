@@ -32,8 +32,8 @@ fleetrun \
     --vocab_path ${vocab_path} \
     --init_pretraining_params ${init_params:-""} \
     --init_checkpoint ${init_checkpoint:-""} \
-    --train_file ${train_file} \
-    --valid_file ${valid_file} \
+    --train_file "${train_file}" \
+    --valid_file "${valid_file}" \
     --data_format ${data_format:-"raw"} \
     --file_format ${file_format:-"file"} \
     --config_path ${config_path} \

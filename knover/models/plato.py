@@ -37,6 +37,9 @@ class Plato(UnifiedTransformer):
                            help="Whether to use BoW loss in training.")
         group.add_argument("--use_entropy", type=str2bool, default=False,
                            help="Whether to use entropy loss in training.")
+        group.add_argument("--entropy_loss_coef", type=float, default=0.01)
+        group.add_argument("--use_nsp", type=str2bool, default=False,
+                           help="Whether to use NSP loss in training.")
         return group
 
     def __init__(self, args, place):
@@ -46,6 +49,8 @@ class Plato(UnifiedTransformer):
         self.latent_emb_name = "latent_embedding"
         self.use_bow = args.use_bow
         self.use_entropy = args.use_entropy
+        self.entropy_loss_coef = args.entropy_loss_coef
+        self.use_nsp = args.use_nsp
 
         super(Plato, self).__init__(args, place)
 
@@ -58,41 +63,19 @@ class Plato(UnifiedTransformer):
         Returns:
             feed_dict: A feed dict mapping keys to feed input variable.
         """
-        feed_dict = {}
-        feed_dict["token_ids"] = layers.data(name="token_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["type_ids"] = layers.data(name="type_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        feed_dict["pos_ids"] = layers.data(name="pos_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-        if self.use_role:
-            feed_dict["role_ids"] = layers.data(name="role_ids", shape=[-1, self.max_seq_len, 1], dtype="int64")
-
-        if not is_infer:
-            feed_dict["recognition_mask"] = layers.data(
-                name="recognition_mask",
-                shape=[-1, self.max_seq_len + 1, self.max_seq_len + 1],
-                dtype=self.dtype)
-        feed_dict["generation_mask"] = layers.data(
-            name="generation_mask",
-            shape=[-1, self.max_seq_len + 1, self.max_seq_len + 1],
-            dtype=self.dtype)
+        feed_dict = super(Plato, self)._get_feed_dict(is_infer)
 
         if is_infer:
-            feed_dict["tgt_ids"] = layers.data(
-                name="tgt_ids", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
-            feed_dict["tgt_pos"] = layers.data(
-                name="tgt_pos", shape=[-1, self.max_seq_len, 1], dtype="int64", lod_level=2)
-            feed_dict["init_score"] = layers.data(
-                name="init_score", shape=[-1, 1], dtype="float32", lod_level=1)
-            feed_dict["parent_idx"] = layers.data(
-                name="parent_idx", shape=[-1], dtype="int64")
-
-            feed_dict["tgt_generation_mask"] = layers.data(
-                name="tgt_generation_mask", shape=[-1, 1, self.max_seq_len + 1], dtype="float32")
             feed_dict["latent_id"] = layers.data(name="latent_id", shape=[-1, 1], dtype="int64")
-            feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
         else:
-            feed_dict["tgt_label"] = layers.data(name="tgt_label", shape=[-1, 1], dtype="int64")
-            feed_dict["tgt_idx"] = layers.data(name="tgt_idx", shape=[-1, 2], dtype="int64")
-
+            feed_dict["rec_mask"] = layers.data(name="rec_mask", shape=[-1, -1, -1], dtype=self.dtype)
+            if self.use_nsp:
+                feed_dict["neg_token_ids"] = layers.data(name="neg_token_ids", shape=[-1, -1, 1], dtype="int64")
+                feed_dict["neg_type_ids"] = layers.data(name="neg_type_ids", shape=[-1, -1, 1], dtype="int64")
+                feed_dict["neg_pos_ids"] = layers.data(name="neg_pos_ids", shape=[-1, -1, 1], dtype="int64")
+                if self.use_role:
+                    feed_dict["neg_role_ids"] = layers.data(name="neg_role_ids", shape=[-1, -1, 1], dtype="int64")
+                feed_dict["neg_rec_mask"] = layers.data(name="neg_rec_mask", shape=[-1, -1, -1], dtype=self.dtype)
             if self.use_bow:
                 feed_dict["bow_label"] = layers.data(name="bow_label", shape=[-1, 1], dtype="int64")
                 feed_dict["bow_idx"] = layers.data(name="bow_idx", shape=[-1, 2], dtype="int64")
@@ -108,7 +91,7 @@ class Plato(UnifiedTransformer):
         """Run recognition network.
 
         Args:
-            tokens_ids: represents the token id of each token, shape is [batch_size, max_seq_len, 1]
+            token_ids: represents the token id of each token, shape is [batch_size, max_seq_len, 1]
             type_ids: represents the type of each token, shape is [batch_size, max_seq_len, 1]
             pos_ids: represents the position of each token, shape is [batch_size, max_seq_len, 1]
             input_mask: represents the attention masking mastrix in each Transformer blocks,
@@ -148,24 +131,22 @@ class Plato(UnifiedTransformer):
             bias_attr="recognition_bias")
         return logits
 
+    def _calc_nsp_logits(self, recognition_out):
+        recognition_feat = self._get_pooled_output(recognition_out, name="nsp")
+        nsp_logits = self._get_classifier_output(recognition_feat, name="next_sent")
+        return nsp_logits
+
     def forward(self, inputs, is_infer=False):
         """Run model main forward."""
         outputs = {}
         if is_infer:
-            self.generation_caches = [{
-                "k":
-                layers.fill_constant_batch_size_like(
-                    input=inputs["token_ids"],
-                    shape=[-1, 0, self.d_key * self.n_head],
-                    dtype=self.dtype,
-                    value=0),
-                "v":
-                layers.fill_constant_batch_size_like(
-                    input=inputs["token_ids"],
-                    shape=[-1, 0, self.d_value * self.n_head],
-                    dtype=self.dtype,
-                    value=0),
-            } for i in range(self.n_layer)]
+            self.generation_caches = []
+            for i in range(self.n_layer):
+                k, v = gen_cache(inputs["token_ids"], self.d_key, self.d_value, self.n_head, self.topo)
+                if self.dtype == "float16":
+                    k = layers.cast(k, self.dtype)
+                    v = layers.cast(v, self.dtype)
+                self.generation_caches.append({"k": k, "v": v})
         else:
             self.generation_caches = None
 
@@ -184,13 +165,23 @@ class Plato(UnifiedTransformer):
                 type_ids=inputs["type_ids"],
                 pos_ids=inputs["pos_ids"],
                 role_ids=inputs.get("role_ids", None),
-                input_mask=inputs["recognition_mask"],
-            )
+                input_mask=inputs["rec_mask"])
             logits = self._calc_recognition_logits(recognition_out)
 
             outputs["post_probs"] = layers.softmax(logits)
             weights = gumbel_softmax(logits)
             outputs["checkpoints"] = recognition_checkpoints
+
+            if self.use_nsp:
+                outputs["pos_logits"] = self._calc_nsp_logits(recognition_out)
+                neg_recognition_out, neg_recognition_checkpoints = self._recognition_network(
+                    token_ids=inputs["neg_token_ids"],
+                    type_ids=inputs["neg_type_ids"],
+                    pos_ids=inputs["neg_pos_ids"],
+                    role_ids=inputs.get("neg_role_ids", None),
+                    input_mask=inputs["neg_rec_mask"])
+                outputs["neg_logits"] = self._calc_nsp_logits(neg_recognition_out)
+                outputs["checkpoints"].extend(neg_recognition_checkpoints)
 
         latent_emb = layers.matmul(x=weights, y=latent_embeddings, transpose_y=True)
         outputs["enc_out"], generation_checkpoints = self._generation_network(
@@ -277,8 +268,33 @@ class Plato(UnifiedTransformer):
         mean_entropy_loss = layers.mean(entropy_loss)
         metrics["entropy_loss"] = mean_entropy_loss
         if self.use_entropy:
-            metrics["loss"] = metrics["loss"] + mean_entropy_loss
+            metrics["loss"] = metrics["loss"] + self.entropy_loss_coef * mean_entropy_loss
+
+        if self.use_nsp:
+            logits = layers.concat([outputs["pos_logits"], outputs["neg_logits"]], axis=0)
+            label = layers.concat(
+                [
+                    layers.fill_constant_batch_size_like(outputs["pos_logits"], [-1, 1], "int64", 1),
+                    layers.fill_constant_batch_size_like(outputs["neg_logits"], [-1, 1], "int64", 0),
+                ],
+                axis=0
+            )
+            nsp_loss, nsp_softmax = layers.softmax_with_cross_entropy(
+                logits=logits, label=label, return_softmax=True)
+            nsp_acc = layers.accuracy(nsp_softmax, label)
+            mean_nsp_acc = layers.mean(nsp_acc)
+            mean_nsp_loss = layers.mean(nsp_loss)
+            metrics["nsp_loss"] = mean_nsp_loss
+            metrics["nsp_acc"] = mean_nsp_acc
+            metrics["loss"] = metrics["loss"] + mean_nsp_loss
         return metrics
+
+    def infer(self, inputs, outputs):
+        """Run model inference."""
+        if self.do_generation:
+            return self.generator.inference(self, inputs, outputs)
+        else:
+            raise NotImplementedError("Plato cannot support to calculate ppl.")
 
     def infer_step(self, inputs):
         """Run one inference step."""

@@ -21,7 +21,6 @@ import paddle.nn.functional as F
 from knover.core.model import Model
 from knover.models import register_model
 from knover.models.unified_transformer import UnifiedTransformer
-from knover.utils import str2bool
 
 
 @register_model("Diamante")
@@ -51,7 +50,7 @@ class Diamante(UnifiedTransformer):
         if not is_infer or not self.do_generation:
             feed_dict["label_idx"] = layers.data(name="label_idx", shape=[-1, 2], dtype="int64")
             if is_infer:
-                feed_dict["data_id"] = layers.data(name="data_id", shape=[-1, 1], dtype="int64")
+                feed_dict["data_id"] = layers.data(name="data_id", shape=[-1], dtype="int64")
             else:
                 feed_dict["label"] = layers.data(name="label", shape=[-1, 1], dtype="int64")
         return feed_dict
@@ -149,7 +148,7 @@ class Diamante(UnifiedTransformer):
             return_numpy=False)
 
         predictions = []
-        data_id_list = np.array(outputs["data_id"]).reshape(-1).tolist()
+        data_id_list = np.array(outputs["data_id"]).tolist()
         token_ids_list = np.array(outputs["token_ids"]).squeeze(2).tolist()
         ranking_score = np.array(outputs["ranking_score"]).tolist()
 

@@ -1,7 +1,7 @@
 ## Basic usage
 
 ### Running with job script
-Carry out local job (local training / local inference / local interaction) with a configuration file. You can specify GPU by `export CUDA_VISIBLE_DEVICES=XXX`.
+Carry out local job (local training / local inference / local interaction) with a configuration file. You can specify GPU by `export CUDA_VISIBLE_DEVICES=XXX` in `./scripts/local/job.sh`. You can also specify other environment variables in the script.
 
 ``` bash
 ./scripts/local/job.sh ${JOB_CONF}

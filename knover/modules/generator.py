@@ -140,10 +140,10 @@ class Generator(object):
 
         state = model._initialize_state(inputs, step_idx)
         if self.decoding_strategy == "beam_search":
-            state["parent_idx"] = inputs["parent_idx"]
+            state["parent_idx"] = layers.range(0, state["bsz"], 1, dtype="int64")
 
         if self.ngram_blocking > 0:
-            self.ngram_blocking_processor.init(inputs["token_ids"])
+            self.ngram_blocking_processor.init(inputs["token_ids"], inputs.get("type_ids", None))
 
         # start while loop
         cond = layers.less_than(x=step_idx, y=max_len)
@@ -172,7 +172,8 @@ class Generator(object):
             logits = layers.case([(min_len_cond, min_len_penalty)], default=no_penalty)
 
             the_eos_penalty = state["is_finished"] * eos_penalty
-            logits = logits - the_eos_penalty
+            with paddle.static.device_guard("cpu"):
+                logits = logits - the_eos_penalty
 
             # get probs
             probs = layers.softmax(logits / self.temperature)

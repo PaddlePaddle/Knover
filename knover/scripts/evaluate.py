@@ -34,12 +34,13 @@ def setup_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--is_distributed", type=str2bool, default=False,
                         help="Whether to run distributed evaluation.")
+    parser.add_argument("--debug", type=str2bool, default=False,
+                        help="Whether to run evaluation in debug mode.")
     parser.add_argument("--save_path", type=str, default="output",
                         help="The path where to save temporary files.")
     parser.add_argument("--eval_file", type=str, required=True,
                         help="The evaluation dataset: file / filelist. "
                         "See more details in `docs/usage.md`: `file_format`.")
-
     parser.add_argument("--log_steps", type=int, default=100,
                         help="Display evaluation log information every X steps.")
 

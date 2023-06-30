@@ -30,7 +30,7 @@ def setup_args():
     parser.add_argument("--save_path", type=str, required=True,
                         help="The path of converted parameters.")
     parser.add_argument("--convert_type", type=str, default="static2dygraph",
-                        choices=["static2dygraph", "dygraph2static", "paddle2pkl", "fp16"],
+                        choices=["static2dygraph", "dygraph2static", "paddle2pkl", "fp16", "fp32"],
                         help="The argument determine how to convert checkpoint.")
 
     return parser.parse_args()
@@ -195,6 +195,14 @@ def to_fp16(state_dict):
     return new_state_dict
 
 
+def to_fp32(state_dict):
+    """Convert parameters from fp16 to fp32."""
+    new_state_dict = {}
+    for k in state_dict:
+        new_state_dict[k] = state_dict[k].astype("float32")
+    return new_state_dict
+
+
 def convert_checkpoint(args):
     """Main function of converting checkpoint."""
     if args.convert_type == "paddle2pkl":
@@ -211,6 +219,10 @@ def convert_checkpoint(args):
     elif args.convert_type == "fp16":
         state_dict = load_program_state(args.param_path)
         state_dict = to_fp16(state_dict)
+        save_static(state_dict, args.save_path)
+    elif args.convert_type == "fp32":
+        state_dict = load_program_state(args.param_path)
+        state_dict = to_fp32(state_dict)
         save_static(state_dict, args.save_path)
     else:
         raise ValueError(f"convert_type: {args.convert_type} is not supported now.")

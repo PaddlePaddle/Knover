@@ -52,9 +52,9 @@ def main(args):
                 if name in tokenized_fields:
                     utts = field.split(" [SEP] ")
                     for j, utt in enumerate(utts):
-                        if "\1" in utt:
-                            utt, role_id = utt.split("\1")
-                            utts[j] = " ".join(tokenizer.tokenize(utt)) + "\1" + role_id
+                        if "\x01" in utt:
+                            utt, role_id = utt.split("\x01")
+                            utts[j] = " ".join(tokenizer.tokenize(utt)) + "\x01" + role_id
                         else:
                             utts[j] = " ".join(tokenizer.tokenize(utt))
                     cols[i] = " [SEP] ".join(utts)

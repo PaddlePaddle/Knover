@@ -33,7 +33,8 @@ class KnowledgeAugmentedGeneration(DialogGeneration):
                            help="Whether to run generation on inference phase. "
                            "Dialogue generation support two type of inference: generation and scoring.")
 
-        group.add_argument("--filter_cross_repetition", type=str2bool, default=True)
+        group.add_argument("--filter_cross_repetition", type=str2bool, default=True,
+                           help="Whether to filter cross turn repetion or not.")
         group.add_argument("--ranking_score", type=str, default="decode_score",
                            help="Which score will be used to rerank.")
         group.add_argument("--do_kag_training", type=str2bool, default=False)
@@ -109,10 +110,10 @@ class KnowledgeAugmentedGeneration(DialogGeneration):
                 "ppl": math.exp(lm_loss / tokens_num),
                 "tokens_num": int(tokens_num),
                 "token_lm_loss": float(lm_loss / tokens_num),
-                "gt_response": self.reader.features[data_id].tgt.split("\1")[0]
+                "gt_response": self.reader.features[data_id].tgt.split("\x01")[0]
             }
             for data_id, lm_loss, tokens_num in zip(
-                predictions["data_id"][:, 0].tolist(), predictions["lm_loss"], predictions["tokens_num"]
+                predictions["data_id"].tolist(), predictions["lm_loss"], predictions["tokens_num"]
             )
         ]
 

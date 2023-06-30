@@ -90,40 +90,49 @@ class NGramBlockingProcessor(object):
         self.bos_id = bos_id
         self.eos_id = eos_id
 
-    def init(self, token_ids):
+    def init(self, token_ids, type_ids):
         """Initalize N-gram blocking strategy related data."""
-        def __wrapper__(token_ids):
-            token_ids = np.array(token_ids)
-            self.ngram_stat_list = [defaultdict(set) for _ in range(token_ids.shape[0])]
-            self.cur_ngram_list = [[] for _ in range(token_ids.shape[0])]
-            for ids, ngram_state in zip(token_ids[:, :, 0], self.ngram_stat_list):
-                last_idx = rindex(ids.tolist(), self.eos_id)
+        def __wrapper__(token_ids, type_ids=None):
+            token_ids_list = np.array(token_ids)
+            if type_ids is not None:
+                type_ids_list = np.array(type_ids)
+            else:
+                type_ids_list = np.full_like(token_ids_list, 0)
+            self.ngram_stat_list = [defaultdict(set) for _ in range(token_ids_list.shape[0])]
+            self.cur_ngram_list = [[] for _ in range(token_ids_list.shape[0])]
+            for token_ids, type_ids, ngram_state in zip(
+                    token_ids_list[:, :, 0], type_ids_list[:, :, 0], self.ngram_stat_list):
+                last_idx = rindex(token_ids.tolist(), self.eos_id)
                 cur_ids = []
                 for i in range(last_idx + 1):
-                    if ids[i] in [self.bos_id, self.eos_id]:
+                    # only check n-gram in src field
+                    if token_ids[i] in [self.bos_id, self.eos_id] or type_ids[i] != 0:
                         cur_ids = []
                     else:
-                        cur_ids.append(ids[i])
+                        cur_ids.append(token_ids[i])
                     if len(cur_ids) >= self.ngram:
                         k = tuple(cur_ids[-self.ngram:-1])
-                        ngram_state[k].add(ids[i])
+                        ngram_state[k].add(token_ids[i])
 
-        static.py_func(func=__wrapper__, x=token_ids, out=None)
+        if type_ids is None:
+            static.py_func(func=__wrapper__, x=token_ids, out=None)
+        else:
+            static.py_func(func=__wrapper__, x=(token_ids, type_ids), out=None)
 
     def apply(self, logits, is_finished):
         """Post process logits by N-gram blocking strategy."""
         def __wrapper__(logits, is_finished):
-            logits = np.array(logits) # shape: [B, V]
+            logits_np = np.array(logits) # shape: [B, V]
             is_finished = np.array(is_finished) # shape: [B, 1]
-            for i in range(logits.shape[0]):
-                if is_finished[i]:
+            for i in range(logits_np.shape[0]):
+                if is_finished[i, 0]:
                     continue
                 if len(self.cur_ngram_list[i]) >= self.ngram - 1:
                     k = tuple(self.cur_ngram_list[i][-self.ngram + 1:])
                     if k in self.ngram_stat_list[i]:
                         for v in self.ngram_stat_list[i][k]:
-                            logits[i][v] -= 1e9
-            return logits
+                            logits_np[i][v] -= 1e9
+            return logits_np
 
         prog = static.default_main_program()
         new_logits = prog.current_block().create_var(name="out_logits", dtype=logits.dtype, shape=logits.shape)

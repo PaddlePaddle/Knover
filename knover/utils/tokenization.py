@@ -43,23 +43,25 @@ def clean_text(text):
     return "".join(output)
 
 
-def preprocess_text(inputs, remove_space=True, lower=False):
+def preprocess_text(inputs, remove_space=True, lower=False, normalize=True):
     """preprocess data by removing extra space and normalize data."""
     outputs = inputs
     if remove_space:
         outputs = " ".join(inputs.strip().split())
 
-    outputs = unicodedata.normalize("NFKD", outputs)
-    outputs = "".join([c for c in outputs if not unicodedata.combining(c)])
+    if normalize:
+        outputs = unicodedata.normalize("NFKD", outputs)
+        outputs = "".join([c for c in outputs if not unicodedata.combining(c)])
     if lower:
         outputs = outputs.lower()
 
     return outputs
 
 
-def encode_pieces(spm_model, text, return_unicode=True, sample=False):
+def encode_pieces(spm_model, text, return_unicode=True, sample=False, normalize=True):
     """Convert sentences into word pieces."""
-    text = clean_text(text)
+    if normalize:
+        text = clean_text(text)
 
     if not sample:
         pieces = spm_model.EncodeAsPieces(text)
@@ -74,14 +76,22 @@ def load_vocab(vocab_file):
     vocab = collections.OrderedDict()
     fin = open(vocab_file)
     for num, line in enumerate(fin):
-        items = line.rstrip().split("\t")
+        items = line.rstrip("\n").split("\t")
         if len(items) > 2:
             break
         token = items[0]
         index = items[1] if len(items) == 2 else num
-        token = token.strip()
         vocab[token] = int(index)
     return vocab
+
+
+def whitespace_tokenize(text):
+    """Runs basic whitespace cleaning and splitting on a piece of text."""
+    text = text.strip()
+    if not text:
+        return []
+    tokens = text.split()
+    return tokens
 
 
 def convert_by_vocab(vocab, items):
@@ -102,6 +112,7 @@ class SentencePieceTokenizer(object):
         group.add_argument("--vocab_path", type=str, required=True)
         group.add_argument("--specials_path", type=str, default="")
         group.add_argument("--do_lower_case", type=str2bool, default=False)
+        group.add_argument("--do_normalization", type=str2bool, default=True)
         group.add_argument("--spm_model_file", type=str, required=True)
         return group
 
@@ -110,16 +121,22 @@ class SentencePieceTokenizer(object):
         self.spm_model.Load(args.spm_model_file)
         self.vocab = load_vocab(args.vocab_path)
         self.do_lower_case = args.do_lower_case
+        self.do_normalization = args.do_normalization
         self.inv_vocab = {v: k for k, v in self.vocab.items()}
         pat_str = ""
         if args.specials_path != "":
             self.specials = load_vocab(args.specials_path)
+            pat = []
             for special in self.specials:
-                pat_str += "(" + re.escape(special) + ")|"
+                pat.append(re.escape(special))
+            if len(pat) > 0:
+                pat_str = "(" + "|".join(pat) + ")"
         else:
             self.specials = {}
-        pat_str += "([a-zA-Z0-9\S]+)"
-        self.pat = re.compile(pat_str)
+        if pat_str != "":
+            self.pat = re.compile(pat_str)
+        else:
+            self.pat = None
 
     # Speedup tokenization.
     cached = {}
@@ -130,26 +147,27 @@ class SentencePieceTokenizer(object):
 
     @property
     def bos_id(self):
-        return self.vocab["<s>"]
+        return self.spm_model.bos_id()
 
     @property
     def eos_id(self):
-        return self.vocab["</s>"]
+        return self.spm_model.eos_id()
 
     @property
     def pad_id(self):
-        return self.vocab["[PAD]"]
+        pad_id = self.spm_model.pad_id()
+        return pad_id if pad_id >= 0 else self.vocab["[PAD]"]
 
     @property
     def unk_id(self):
-        return self.vocab["<unk>"]
+        return self.spm_model.unk_id()
 
     @property
     def mask_id(self):
-        return self.vocab["[MASK]"]
+        return self.vocab.get("[MASK]", None)
 
     def preprocess(self, text):
-        text = preprocess_text(text, lower=self.do_lower_case)
+        text = preprocess_text(text, lower=self.do_lower_case, normalize=self.do_normalization)
         return text
 
     def tokenize(self, text):
@@ -158,12 +176,15 @@ class SentencePieceTokenizer(object):
         if text in self.cached:
             return self.cached[text]
         tokens = []
-        for match in self.pat.finditer(text):
-            part_text = match.group(0)
+        if self.pat is None:
+            part_text_list = [text]
+        else:
+            part_text_list = self.pat.split(text)
+        for part_text in part_text_list:
             if part_text in self.specials:
                 tokens.append(part_text)
                 continue
-            part_tokens = encode_pieces(self.spm_model, part_text, return_unicode=True)
+            part_tokens = encode_pieces(self.spm_model, part_text, return_unicode=True, normalize=self.do_normalization)
             tokens.extend(part_tokens)
         self.cached[text] = tokens
         return tokens

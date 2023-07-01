@@ -145,7 +145,8 @@ class PlatoReader(DialogReader):
                 batch["neg_type_ids"] = pad_batch_data([record.neg_type_ids[:-1] for record in batch_records], pad_id=0)
                 batch["neg_pos_ids"] = pad_batch_data([record.neg_pos_ids[:-1] for record in batch_records], pad_id=0)
                 if self.use_role:
-                    batch["neg_role_ids"] = pad_batch_data([record.neg_role_ids[:-1] for record in batch_records], pad_id=0)
+                    batch["neg_role_ids"] = pad_batch_data(
+                        [record.neg_role_ids[:-1] for record in batch_records], pad_id=0)
 
                 batch["neg_rec_mask"] = self._gen_self_attn_mask(
                     batch["neg_token_ids"], is_unidirectional=False, num_aux_token=1)

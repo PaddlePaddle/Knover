@@ -486,7 +486,7 @@ def get_nsp_score_batch(nsp_predictor, predictions):
     for data in generator():
         outputs = nsp_predictor(data)
         for probs, data_id in zip(outputs[0], outputs[-1]):
-            data_id = data_id[0]
+            data_id = data_id
             pred = predictions[data_id]
             pred["nsp_score"] = float(probs[1])
 

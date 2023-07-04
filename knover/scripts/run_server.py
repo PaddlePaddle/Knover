@@ -36,10 +36,10 @@ from knover.utils import check_cuda, parse_args, str2bool
 
 class Request(BaseModel):
     context: List[str]
-    context_role: List[int] = []
-    knowledge: List[str] = []
-    knowledge_role: List[int] = []
-    extra_infos: Optional[List[Any]]
+    context_role: Optional[List[int]] = []
+    knowledge: Optional[List[str]] = []
+    knowledge_role: Optional[List[int]] = []
+    extra_infos: Optional[List[Any]] = None
 
 
 class Response(BaseModel):
@@ -95,6 +95,7 @@ def run_server(args):
     @app.post(f"/api/{args.api_name}")
     def inference(req: Request) -> Response:
         """Inference service API."""
+        print(f"Start to process request: {req}")
         lock.acquire()
         try:
             if args.is_distributed and gpu_id == 0:
@@ -142,12 +143,12 @@ def run_server(args):
             task.reader.features.pop(data_id)
             ret = {
                 "error_code": 0,
-                "error_msg": "ok"
+                "error_msg": "ok",
                 "name": args.bot_name,
                 "reply": bot_response,
-                "extra_info": "candidates\n" + "\n".join(
-                    f"{cand['response']} -- {cand['score']}" for cand in pred["candidates"]
-                )
+                "extra_info": {
+                    "candidates": pred["candidates"]
+                }
             }
 
             if args.is_distributed and gpu_id == 0:
@@ -163,6 +164,7 @@ def run_server(args):
                 "reply": "",
             }
         lock.release()
+        print(f"Response: {json.dumps(ret, ensure_ascii=False, indent=2)}")
         return ret
 
     if gpu_id == 0:

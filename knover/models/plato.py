@@ -20,7 +20,7 @@ import paddle.fluid.layers as layers
 from knover.models import register_model
 from knover.core.model import Model
 from knover.models.unified_transformer import UnifiedTransformer
-from knover.modules.transformer_block import pre_process_layer
+from knover.modules.transformer_block import gen_cache, pre_process_layer
 from knover.utils import repeat_array_or_tensor
 from knover.utils import str2bool
 

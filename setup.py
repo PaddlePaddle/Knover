@@ -19,6 +19,9 @@ import setuptools
 with open("README.md", "r") as f:
     readme = f.read()
 
+with open("requirements.txt") as f:
+    requirements = f.read().strip("\n").split("\n")
+
 
 if __name__ == "__main__":
     print(setuptools.find_packages())
@@ -36,11 +39,5 @@ if __name__ == "__main__":
             "Topic :: Scientific/Engineering :: Artificial Intelligence",
         ],
         python_requires=">=3.7",
-        install_requires=[
-            "paddlepaddle-gpu>=2.4.0",
-            "numpy",
-            "sentencepiece",
-            "termcolor",
-            "tqdm"
-        ]
+        install_requires=requirements
     )

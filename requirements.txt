@@ -1,0 +1,8 @@
+fastapi
+numpy
+paddlepaddle-gpu>=2.4.0
+requests
+sentencepiece
+termcolor
+tqdm
+uvicorn

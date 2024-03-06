@@ -1,6 +1,6 @@
 fastapi
 numpy
-paddlepaddle-gpu>=2.4.0
+paddlepaddle-gpu>=2.4.0,<2.5.0
 requests
 sentencepiece
 termcolor
